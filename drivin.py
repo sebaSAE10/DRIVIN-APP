@@ -19,7 +19,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Estilos CSS
+# Estilos CSS personalizados
 st.markdown(
     """
 <style>
@@ -54,6 +54,16 @@ st.markdown(
     .kpi-warning { border-left-color: #f39c12; }
     .kpi-info { border-left-color: #3498db; }
     .kpi-purple { border-left-color: #8e44ad; }
+    
+    .nav-header {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #2c3e50;
+        margin-top: 15px;
+        margin-bottom: 10px;
+        border-bottom: 2px solid #e2e8f0;
+        padding-bottom: 5px;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -78,6 +88,10 @@ INFO_ACTUALIZACION_FILE = "ultima_actualizacion.txt"
 
 if not os.path.exists(CAPTURAS_DIR):
   os.makedirs(CAPTURAS_DIR)
+
+# INICIALIZACIÓN DE NAVEGACIÓN EN SESSION STATE
+if "modulo_activo" not in st.session_state:
+  st.session_state.modulo_activo = "INICIO"
 
 
 # --- MANEJO DE OPCIONES DINÁMICAS DE PROBLEMAS ---
@@ -954,7 +968,7 @@ def ejecutar_cruce_completo(file_drivin, file_sae=None, file_smartsheet=None):
     totales_p, df_fos_p, df_rank_p = procesar_drivin_excel(file_drivin)
 
   if totales_p["total_fo"] == 0 or totales_p["total_fo"] < len(df_fos_p):
-    totales_p["total_fo"] = len(df_fos_p) if not df_fos_p.empty else 500
+    totales_p["total_fo"] = len(df_fos_p) if not df_fos_p.empty else 650
     totales_p["integradas"] = totales_p["total_fo"]
 
   df_sae_p = (
@@ -1173,6 +1187,12 @@ with st.sidebar:
   st.title(" Panel Drivin")
   st.caption("Operación Komatsu Cummins - SAE")
 
+  if st.session_state.modulo_activo != "INICIO":
+    if st.button("🏠 Menú Principal / Inicio", use_container_width=True, type="primary"):
+      st.session_state.modulo_activo = "INICIO"
+      st.rerun()
+    st.divider()
+
   fecha_act_display = st.session_state.get(
       "ultima_fecha_act", ultima_fecha_act
   )
@@ -1200,7 +1220,7 @@ with st.sidebar:
   servicios_mensuales_admin = st.number_input(
       "📦 Total Servicios Mensuales Operativos:",
       min_value=1,
-      value=500,
+      value=650,
       step=10,
       help="Indica el total estimado de servicios del mes para autocompletar en caso de faltar totales.",
   )
@@ -1403,7 +1423,7 @@ if st.session_state.get("mostrar_modal_guardar", False):
   modal_guardar_historico()
 
 
-# --- DASHBOARD ---
+# --- ENCABEZADO Y KPIS PRINCIPALES ---
 st.title("🚚 Dashboard Operativo Drivin")
 
 fecha_encabezado = st.session_state.get("ultima_fecha_act", ultima_fecha_act)
@@ -1468,7 +1488,6 @@ elif fecha_consultada != "📅 Carga Actual Local" and not df_hist.empty:
   pct_at = float(fila_dia["Pct_A_Tiempo"])
   pct_v = float(fila_dia["Pct_Vencidas"])
 else:
-  # CARGA ACTUAL LOCAL REAL
   val_tot = st.session_state.totales.get("total_fo", 0) if st.session_state.get("totales") else len(df_cruce)
   val_int = st.session_state.totales.get("integradas", len(df_cruce)) if st.session_state.get("totales") else len(df_cruce)
   val_at = st.session_state.totales.get("a_tiempo", 0) if st.session_state.get("totales") else 0
@@ -1540,7 +1559,6 @@ if val_int > 0:
         unsafe_allow_html=True,
     )
 
-  # SEGUNDA FILA DE KPIs: REPORTES Y EVENTOS
   st.markdown("##### 🚨 Análisis de Reportes de Inconsistencias y Eventos")
   cr1, cr2, cr3 = st.columns(3)
   with cr1:
@@ -1571,1039 +1589,374 @@ if val_int > 0:
         unsafe_allow_html=True,
     )
 
-  st.markdown("<br>", unsafe_allow_html=True)
+st.divider()
 
-# PESTAÑAS
-(
-    tab_vencidas_vigentes,
-    tab_rango_fechas,
-    tab_metas_graficos,
-    tab_ranking,
-    tab_sucursales,
-    tab_retraso,
-    tab_reportar,
-    tab_historico,
-) = st.tabs([
-    "📋 Vencidas y Vigentes",
-    "📅 Rendimiento Acumulado Rango de Fechas",
-    "📊 Metas y Gráficos (95% / 90%)",
-    "🏆 Ranking Conductores",
-    "🏢 Rendimiento por Sucursales",
-    "⏱️ Finalizadas con Retraso",
-    "🚨 Reportar FO / Inconsistencias",
-    "📈 Evolución Histórica",
-])
+# --- VISTA 1: MENÚ PRINCIPAL TIPO PORTAL TARJETAS (ORDENADO) ---
+if st.session_state.modulo_activo == "INICIO":
+  st.markdown("### 🗂️ Selecciona un Módulo para Visualizar")
+  st.caption("Haz clic en cualquier tarjeta para desplegar el módulo a pantalla completa.")
 
-with tab_vencidas_vigentes:
-  if not df_cruce.empty:
-    st.subheader("📋 Tabla Unificada de Vencidas y Vigentes")
-    col_f1, col_f2 = st.columns(2)
-    with col_f1:
-      est_opts = df_cruce["Estado de la ruta"].unique()
-      estado_sel = st.multiselect(
-          "Filtrar Estado de la Ruta:", options=est_opts, default=est_opts
-      )
-    with col_f2:
-      suc_opts = df_cruce["SUCURSAL"].unique()
-      sucursal_sel = st.multiselect(
-          "Filtrar Sucursal:", options=suc_opts, default=suc_opts
-      )
+  b_col1, b_col2, b_col3, b_col4 = st.columns(4)
 
-    df_vv_filtrado = df_cruce[df_cruce["Estado de la ruta"].isin(estado_sel)]
-    if sucursal_sel:
-      df_vv_filtrado = df_vv_filtrado[
-          df_vv_filtrado["SUCURSAL"].isin(sucursal_sel)
-      ]
-
-    st.dataframe(
-        df_vv_filtrado.style.map(
-            color_filas_estado, subset=["Estado de la ruta"]
-        ),
-        use_container_width=True,
-        height="auto",
-    )
-
-    dict_met_export = {
-        "Fecha_Consulta": fecha_consultada,
-        "Total_FO": val_tot,
-        "FO_Integradas": val_int,
-        "A_Tiempo": val_at,
-        "Con_Retraso": val_ret,
-        "Vigentes": val_vig,
-        "Vencidas": val_ven,
-        "FO_Reportadas": val_rep,
-        "FO_Con_Evento": val_evt,
-        "Retrasos_Reportados": val_ret_rep,
-        "Pct_A_Tiempo": pct_at,
-        "Pct_Vencidas": pct_v,
-    }
-    bytes_excel = generar_excel_descarga(
-        df_vv_filtrado, dict_met_export, df_ranking
-    )
-    st.download_button(
-        label="📥 Descargar Excel Vencidas y Vigentes",
-        data=bytes_excel,
-        file_name=f"Vencidas_y_Vigentes_{datetime.now().strftime('%Y%m%d')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-  else:
-    st.info(
-        "👈 Carga y procesa archivos desde el menú lateral para ver la tabla."
-    )
-
-with tab_rango_fechas:
-  st.subheader(
-      "📅 Filtrado de FO por Rango de Fechas (Basado en Servicios Mensuales)"
-  )
-
-  if not df_cruce.empty:
-    df_rf = df_cruce.copy()
-
-    def parsear_fecha(val):
-      if pd.isna(val) or str(val).strip() in ["-", "", "nan", "None"]:
-        return pd.NaT
-      try:
-        return pd.to_datetime(val, dayfirst=True, errors="coerce")
-      except Exception:
-        return pd.NaT
-
-    df_rf["Fecha_Inicio_dt"] = (
-        df_rf["Fin plan"].apply(parsear_fecha)
-        if "Fin plan" in df_rf.columns
-        else df_rf["Fin Planificado"].apply(parsear_fecha)
-    )
-
-    df_rf["Fecha_Final_Eval"] = df_rf["Fecha_Inicio_dt"].dt.date
-    df_valid_dates = df_rf.dropna(subset=["Fecha_Final_Eval"])
-
-    if not df_valid_dates.empty:
-      min_f_plan = df_valid_dates["Fecha_Final_Eval"].min()
-      max_f_plan = df_valid_dates["Fecha_Final_Eval"].max()
-
-      col_rf1, col_rf2 = st.columns(2)
-      with col_rf1:
-        f_desde = st.date_input(
-            "📅 Fecha Desde:", value=min_f_plan, key="f_desde_plan"
-        )
-      with col_rf2:
-        f_hasta = st.date_input(
-            "📅 Fecha Hasta:", value=max_f_plan, key="f_hasta_plan"
-        )
-
-      if f_desde > f_hasta:
-        st.error(
-            "⚠️ La 'Fecha Desde' no puede ser posterior a la 'Fecha Hasta'."
-        )
-      else:
-        dias_rango = (f_hasta - f_desde).days + 1
-        servicios_proporcionales_rango = max(
-            1, int((servicios_mensuales_admin / 30) * dias_rango)
-        )
-
-        df_filtrado_desviaciones = df_rf[
-            (df_rf["Fecha_Final_Eval"] >= f_desde)
-            & (df_rf["Fecha_Final_Eval"] <= f_hasta)
-        ]
-
-        ret_r = len(
-            df_filtrado_desviaciones[
-                df_filtrado_desviaciones["Estado de la ruta"]
-                == "Finalizada con Retraso"
-            ]
-        )
-        ven_r = len(
-            df_filtrado_desviaciones[
-                df_filtrado_desviaciones["Estado de la ruta"] == "Vencida"
-            ]
-        )
-        vig_r = len(
-            df_filtrado_desviaciones[
-                df_filtrado_desviaciones["Estado de la ruta"] == "Vigente"
-            ]
-        )
-        rec_r = len(
-            df_filtrado_desviaciones[
-                df_filtrado_desviaciones["Estado de la ruta"] == "Rechazada"
-            ]
-        )
-
-        total_r = max(
-            servicios_proporcionales_rango,
-            (ret_r + ven_r + vig_r + rec_r),
-        )
-        at_r = max(0, total_r - (ret_r + ven_r + vig_r + rec_r))
-
-        pct_at_r = (at_r / total_r * 100) if total_r > 0 else 0.0
-        pct_v_r = (ven_r / total_r * 100) if total_r > 0 else 0.0
-
-        st.markdown(
-            f"##### 📊 Resultados para los **{dias_rango} días del periodo**"
-            f" (**{f_desde.strftime('%d/%m/%Y')}** al"
-            f" **{f_hasta.strftime('%d/%m/%Y')}**)"
-        )
-        st.caption(
-            f"ℹ️ Calculado en base a los **{servicios_mensuales_admin}**"
-            " servicios mensuales configurados en el Panel Administrador (~"
-            f" {servicios_proporcionales_rango} FO en este rango)."
-        )
-
-        rk1, rk2, rk3, rk4, rk5 = st.columns(5)
-        with rk1:
-          st.markdown(
-              '<div class="kpi-card kpi-info"><div class="kpi-title">Total'
-              f' Estimado</div><div class="kpi-value">{total_r}</div><div'
-              ' class="kpi-sub" style="color: #3498db;">Servicios'
-              ' Periodo</div></div>',
-              unsafe_allow_html=True,
-          )
-        with rk2:
-          color_at_r = "#2ecc71" if pct_at_r >= 90 else "#e74c3c"
-          st.markdown(
-              '<div class="kpi-card'
-              f' {"kpi-success" if pct_at_r >= 90 else "kpi-danger"}"><div'
-              ' class="kpi-title">% On-Time Est.</div><div'
-              f' class="kpi-value">{pct_at_r:.1f}%</div><div class="kpi-sub"'
-              f' style="color: {color_at_r};">{at_r} FO A Tiempo</div></div>',
-              unsafe_allow_html=True,
-          )
-        with rk3:
-          st.markdown(
-              '<div class="kpi-card kpi-warning"><div class="kpi-title">Con'
-              ' Retraso</div><div'
-              f' class="kpi-value">{(ret_r/total_r*100):.1f}%</div><div'
-              ' class="kpi-sub" style="color: #e67e22;">'
-              f"{ret_r} FO Tarde</div></div>",
-              unsafe_allow_html=True,
-          )
-        with rk4:
-          color_v_r = "#2ecc71" if pct_v_r <= 5 else "#e74c3c"
-          st.markdown(
-              '<div class="kpi-card'
-              f' {"kpi-success" if pct_v_r <= 5 else "kpi-danger"}"><div'
-              ' class="kpi-title">% Vencidas</div><div'
-              f' class="kpi-value">{pct_v_r:.1f}%</div><div class="kpi-sub"'
-              f' style="color: {color_v_r};">{ven_r} FO Vencidas</div></div>',
-              unsafe_allow_html=True,
-          )
-        with rk5:
-          st.markdown(
-              '<div class="kpi-card kpi-info"><div class="kpi-title">FO'
-              f' Vigentes</div><div class="kpi-value">{vig_r}</div><div'
-              ' class="kpi-sub" style="color: #3498db;">En Proceso</div></div>',
-              unsafe_allow_html=True,
-          )
-
-        st.divider()
-        gr1, gr2 = st.columns(2)
-        with gr1:
-          df_bar_plan = (
-              df_filtrado_desviaciones.groupby(
-                  ["Fecha_Final_Eval", "Estado de la ruta"]
-              )
-              .size()
-              .reset_index(name="Cantidad")
-          )
-          fig_r_bar = px.bar(
-              df_bar_plan,
-              x="Fecha_Final_Eval",
-              y="Cantidad",
-              color="Estado de la ruta",
-              title="Desviaciones por Fecha Planificada",
-              barmode="stack",
-              color_discrete_map={
-                  "Finalizada con Retraso": "#f39c12",
-                  "Vencida": "#e74c3c",
-                  "Vigente": "#3498db",
-              },
-          )
-          st.plotly_chart(fig_r_bar, use_container_width=True)
-
-        with gr2:
-          df_pie_data = pd.DataFrame({
-              "Estado": ["A Tiempo (Est.)", "Con Retraso", "Vencida", "Vigente"],
-              "Cantidad": [at_r, ret_r, ven_r, vig_r],
-          })
-          fig_r_pie = px.pie(
-              df_pie_data[df_pie_data["Cantidad"] > 0],
-              names="Estado",
-              values="Cantidad",
-              title="Distribución Proporcional en el Rango",
-              hole=0.4,
-              color_discrete_map={
-                  "A Tiempo (Est.)": "#2ecc71",
-                  "Con Retraso": "#f39c12",
-                  "Vencida": "#e74c3c",
-                  "Vigente": "#3498db",
-              },
-          )
-          st.plotly_chart(fig_r_pie, use_container_width=True)
-
-        st.markdown("##### 📋 Listado de Desviaciones Registradas en el Rango")
-        cols_mostrar = [
-            c
-            for c in [
-                "FO",
-                "Fin plan",
-                "Fin real",
-                "Desviación",
-                "Conductor",
-                "RESPONSABLE",
-                "Estado de la ruta",
-                "SUCURSAL",
-            ]
-            if c in df_filtrado_desviaciones.columns
-        ]
-        st.dataframe(
-            df_filtrado_desviaciones[cols_mostrar].style.map(
-                color_filas_estado, subset=["Estado de la ruta"]
-            ),
-            use_container_width=True,
-            height="auto",
-        )
-    else:
-      st.warning(
-          "No se pudieron interpretar fechas válidas en las FO del archivo"
-          " cargado."
-      )
-  else:
-    st.info(
-        "👈 Carga y procesa un archivo Drivin para filtrar FO por su fecha"
-        " planificada."
-    )
-
-with tab_metas_graficos:
-  st.subheader(
-      "📊 Evaluación de Cumplimiento de Metas Operativas (95% y 90%)"
-  )
-  if not df_cruce.empty:
-    cf1, cf2 = st.columns(2)
-    with cf1:
-      suc_disponibles = sorted(df_cruce["SUCURSAL"].unique().tolist())
-      suc_seleccionadas = st.multiselect(
-          "Filtrar por Sucursal(es):",
-          options=suc_disponibles,
-          default=suc_disponibles,
-          key="filter_suc_metas",
-      )
-    with cf2:
-      resp_disponibles = sorted(df_cruce["RESPONSABLE"].unique().tolist())
-      resp_seleccionados = st.multiselect(
-          "Filtrar por Responsable KCC:",
-          options=resp_disponibles,
-          default=resp_disponibles,
-          key="filter_resp_metas",
-      )
-
-    df_m_filtrado = df_cruce[
-        (df_cruce["SUCURSAL"].isin(suc_seleccionadas))
-        & (df_cruce["RESPONSABLE"].isin(resp_seleccionados))
-    ]
-
-    tot_f = len(df_m_filtrado)
-    if tot_f > 0:
-      cnt_at = len(
-          df_m_filtrado[
-              df_m_filtrado["Estado de la ruta"].isin(
-                  ["Finalizada a tiempo", "A Tiempo"]
-              )
-          ]
-      )
-      cnt_ret = len(
-          df_m_filtrado[
-              df_m_filtrado["Estado de la ruta"] == "Finalizada con Retraso"
-          ]
-      )
-      cnt_ven = len(
-          df_m_filtrado[df_m_filtrado["Estado de la ruta"] == "Vencida"]
-      )
-      cnt_vig = len(
-          df_m_filtrado[df_m_filtrado["Estado de la ruta"] == "Vigente"]
-      )
-
-      if len(suc_seleccionadas) == len(suc_disponibles) and len(
-          resp_seleccionados
-      ) == len(resp_disponibles):
-        calc_tot = val_tot
-        calc_at = val_at
-        calc_ret = val_ret
-        calc_ven = val_ven
-        calc_vig = val_vig
-      else:
-        calc_tot = tot_f
-        calc_at = cnt_at
-        calc_ret = cnt_ret
-        calc_ven = cnt_ven
-        calc_vig = cnt_vig
-
-      calc_fin = calc_at + calc_ret
-      pct_fin_tot = (calc_fin / calc_tot * 100) if calc_tot > 0 else 0.0
-      pct_a_tiempo_tot = (calc_at / calc_tot * 100) if calc_tot > 0 else 0.0
-
-      g1, g2 = st.columns(2)
-      with g1:
-        st.markdown("#### 1. Meta 95% FO Finalizadas Totales")
-        fig_g95 = go.Figure(
-            go.Indicator(
-                mode="gauge+number+delta",
-                value=pct_fin_tot,
-                domain={"x": [0, 1], "y": [0, 1]},
-                title={"text": "% Finalizadas (A tiempo + Retraso)"},
-                delta={
-                    "reference": 95.0,
-                    "increasing": {"color": "green"},
-                    "decreasing": {"color": "red"},
-                },
-                gauge={
-                    "axis": {"range": [0, 100]},
-                    "bar": {"color": "#1E88E5"},
-                    "steps": [
-                        {"range": [0, 85], "color": "#ffebee"},
-                        {"range": [85, 95], "color": "#fff3e0"},
-                        {"range": [95, 100], "color": "#e8f5e9"},
-                    ],
-                    "threshold": {
-                        "line": {"color": "red", "width": 4},
-                        "thickness": 0.75,
-                        "value": 95.0,
-                    },
-                },
-            )
-        )
-        fig_g95.update_layout(height=320)
-        st.plotly_chart(fig_g95, use_container_width=True)
-
-      with g2:
-        st.markdown("#### 2. Meta 90% FO Finalizadas a Tiempo")
-        fig_g90 = go.Figure(
-            go.Indicator(
-                mode="gauge+number+delta",
-                value=pct_a_tiempo_tot,
-                domain={"x": [0, 1]},
-                title={"text": "% Finalizadas A Tiempo (On-Time)"},
-                delta={
-                    "reference": 90.0,
-                    "increasing": {"color": "green"},
-                    "decreasing": {"color": "red"},
-                },
-                gauge={
-                    "axis": {"range": [0, 100]},
-                    "bar": {
-                        "color": "#2ecc71"
-                        if pct_a_tiempo_tot >= 90
-                        else "#e74c3c"
-                    },
-                    "steps": [
-                        {"range": [0, 75], "color": "#ffebee"},
-                        {"range": [75, 90], "color": "#fff3e0"},
-                        {"range": [90, 100], "color": "#e8f5e9"},
-                    ],
-                    "threshold": {
-                        "line": {"color": "red", "width": 4},
-                        "thickness": 0.75,
-                        "value": 90.0,
-                    },
-                },
-            )
-        )
-        fig_g90.update_layout(height=320)
-        st.plotly_chart(fig_g90, use_container_width=True)
-
-      st.divider()
-      c_pie1, c_pie2 = st.columns(2)
-      with c_pie1:
-        df_pie_95 = pd.DataFrame({
-            "Estado": ["A Tiempo", "Con Retraso", "Vigentes", "Vencidas"],
-            "Cantidad": [calc_at, calc_ret, calc_vig, calc_ven],
-        })
-        fig_pie1 = px.pie(
-            df_pie_95,
-            names="Estado",
-            values="Cantidad",
-            color="Estado",
-            color_discrete_map={
-                "A Tiempo": "#2ecc71",
-                "Con Retraso": "#f39c12",
-                "Vigentes": "#3498db",
-                "Vencidas": "#e74c3c",
-            },
-            hole=0.4,
-        )
-        st.plotly_chart(fig_pie1, use_container_width=True)
-      with c_pie2:
-        df_pie_90 = pd.DataFrame({
-            "Condición": ["A Tiempo", "Con Retraso"],
-            "Cantidad": [calc_at, calc_ret],
-        })
-        fig_pie2 = px.pie(
-            df_pie_90,
-            names="Condición",
-            values="Cantidad",
-            color="Condición",
-            color_discrete_map={"A Tiempo": "#2ecc71", "Con Retraso": "#e67e22"},
-            hole=0.4,
-        )
-        st.plotly_chart(fig_pie2, use_container_width=True)
-
-with tab_ranking:
-  st.subheader("🏆 Ranking de Cumplimiento de Conductores")
-  if df_ranking is not None and not df_ranking.empty:
-    st.dataframe(df_ranking, use_container_width=True, height="auto")
-  else:
-    st.info("Sin datos de ranking actualmente.")
-
-with tab_sucursales:
-  if not df_cruce.empty:
-    st.subheader("🏢 Rendimiento por Sucursales")
-    fig_suc = px.bar(
-        df_cruce,
-        x="SUCURSAL",
-        color="Estado de la ruta",
-        barmode="group",
-        text_auto=True,
-    )
-    st.plotly_chart(fig_suc, use_container_width=True)
-
-# --- PESTAÑA: FINALIZADAS CON RETRASO ---
-with tab_retraso:
-  col_tit_ret, col_btn_act = st.columns([3, 1])
-  with col_tit_ret:
-    st.subheader("⏱️ FO Finalizadas con Retraso")
-  with col_btn_act:
-    if st.button(
-        "🔄 Actualizar Planilla",
-        key="btn_act_retrasos",
-        use_container_width=True,
-        type="primary",
-    ):
-      st.cache_data.clear()
-      c_tot, c_cruce, c_rank, c_fecha = cargar_cache_global()
-
-      if not c_cruce.empty:
-        df_reps_sync = cargar_reportes_fo()
-        if not df_reps_sync.empty:
-          df_reps_sync["FO"] = df_reps_sync["FO"].apply(limpiar_fo_str)
-          df_reps_grouped_s = (
-              df_reps_sync.groupby("FO")
-              .agg({
-                  "Tipo_Problema": "last",
-                  "Coordinador_Komatsu": "last",
-                  "Responsable": "last",
-                  "Detalle_Observacion": "last",
-              })
-              .reset_index()
-          )
-          df_reps_grouped_s["Estado_Reporte"] = "🚨 REPORTADA"
-          df_reps_grouped_s["Detalle_Reporte"] = (
-              "Motivo: "
-              + df_reps_grouped_s["Tipo_Problema"].astype(str)
-              + " | Coord. Komatsu: "
-              + df_reps_grouped_s["Coordinador_Komatsu"].astype(str)
-              + " | Resp: "
-              + df_reps_grouped_s["Responsable"].astype(str)
-              + " | Obs: "
-              + df_reps_grouped_s["Detalle_Observacion"].astype(str)
-          )
-
-          for col_drop in ["Estado_Reporte", "Detalle_Reporte"]:
-            if col_drop in c_cruce.columns:
-              c_cruce = c_cruce.drop(columns=[col_drop])
-
-          c_cruce = pd.merge(
-              c_cruce,
-              df_reps_grouped_s[["FO", "Estado_Reporte", "Detalle_Reporte"]],
-              on="FO",
-              how="left",
-          )
-          c_cruce["Estado_Reporte"] = c_cruce["Estado_Reporte"].fillna(
-              "Sin Reporte"
-          )
-          c_cruce["Detalle_Reporte"] = c_cruce["Detalle_Reporte"].fillna("-")
-
-      guardar_cache_global(c_tot, c_cruce, c_rank)
-      st.session_state.totales = c_tot
-      st.session_state.df_cruce = c_cruce
-      st.session_state.df_ranking = c_rank
-      st.session_state.ultima_fecha_act = (
-          datetime.now().strftime("%d/%m/%Y a las %H:%M hrs")
-      )
-      st.success("✅ Planilla de retrasos y reportes actualizada.")
+  with b_col1:
+    st.markdown('<div class="nav-header">📋 Control de Rutas</div>', unsafe_allow_html=True)
+    if st.button("📋 Vencidas y Vigentes", use_container_width=True):
+      st.session_state.modulo_activo = "VENCIDAS_VIGENTES"
+      st.rerun()
+    if st.button("⏱️ Finalizadas con Retraso", use_container_width=True):
+      st.session_state.modulo_activo = "RETRASO"
       st.rerun()
 
-  if not df_cruce.empty:
-    df_solo_retraso = df_cruce[
-        df_cruce["Estado de la ruta"] == "Finalizada con Retraso"
-    ].copy()
+  with b_col2:
+    st.markdown('<div class="nav-header">📊 Rendimiento & Metas</div>', unsafe_allow_html=True)
+    if st.button("📅 Rendimiento Rango Fechas", use_container_width=True):
+      st.session_state.modulo_activo = "RANGO_FECHAS"
+      st.rerun()
+    if st.button("📊 Metas y Gráficos (95%/90%)", use_container_width=True):
+      st.session_state.modulo_activo = "METAS"
+      st.rerun()
+    if st.button("🏢 Rendimiento por Sucursales", use_container_width=True):
+      st.session_state.modulo_activo = "SUCURSALES"
+      st.rerun()
 
-    if not df_solo_retraso.empty:
-      df_solo_retraso["FO"] = df_solo_retraso["FO"].apply(limpiar_fo_str)
+  with b_col3:
+    st.markdown('<div class="nav-header">🚨 Gestión de Inconsistencias</div>', unsafe_allow_html=True)
+    if st.button("📝 Reportar / Editar FO", use_container_width=True):
+      st.session_state.modulo_activo = "REPORTAR"
+      st.rerun()
+    if st.button("📊 Reportes para el Mandante", use_container_width=True):
+      st.session_state.modulo_activo = "MANDANTE"
+      st.rerun()
 
-      df_reps_info = cargar_reportes_fo()
-      if not df_reps_info.empty:
-        df_reps_info["FO"] = df_reps_info["FO"].apply(limpiar_fo_str)
+  with b_col4:
+    st.markdown('<div class="nav-header">🏆 Histórico & Conductores</div>', unsafe_allow_html=True)
+    if st.button("🏆 Ranking Conductores", use_container_width=True):
+      st.session_state.modulo_activo = "RANKING"
+      st.rerun()
+    if st.button("📈 Evolución Histórica", use_container_width=True):
+      st.session_state.modulo_activo = "HISTORICO"
+      st.rerun()
 
-        df_reps_grouped = (
-            df_reps_info.groupby("FO")
-            .agg({
-                "Tipo_Problema": "last",
-                "Coordinador_Komatsu": "last",
-                "Responsable": "last",
-                "Detalle_Observacion": "last",
-            })
-            .reset_index()
-        )
-        df_reps_grouped["Estado_Reporte"] = "🚨 REPORTADA"
-        df_reps_grouped["Detalle_Reporte"] = (
-            "Motivo: "
-            + df_reps_grouped["Tipo_Problema"].astype(str)
-            + " | Coord. Komatsu: "
-            + df_reps_grouped["Coordinador_Komatsu"].astype(str)
-            + " | Resp: "
-            + df_reps_grouped["Responsable"].astype(str)
-            + " | Obs: "
-            + df_reps_grouped["Detalle_Observacion"].astype(str)
-        )
+# --- VISTA 2: NAVEGACIÓN HÍBRIDA (BOTÓN DE REGRESO + BARRA DE PESTAÑAS PANTALLA COMPLETA) ---
+else:
+  col_btn_reg, col_space = st.columns([1, 4])
+  with col_btn_reg:
+    if st.button("⬅️ Volver al Menú Principal (Módulos)", type="primary", use_container_width=True):
+      st.session_state.modulo_activo = "INICIO"
+      st.rerun()
 
-        for c_drop in ["Estado_Reporte", "Detalle_Reporte"]:
-          if c_drop in df_solo_retraso.columns:
-            df_solo_retraso = df_solo_retraso.drop(columns=[c_drop])
+  st.markdown("<br>", unsafe_allow_html=True)
 
-        df_solo_retraso = pd.merge(
-            df_solo_retraso,
-            df_reps_grouped[["FO", "Estado_Reporte", "Detalle_Reporte"]],
-            on="FO",
-            how="left",
-        )
-        df_solo_retraso["Estado_Reporte"] = df_solo_retraso[
-            "Estado_Reporte"
-        ].fillna("Sin Reporte")
-        df_solo_retraso["Detalle_Reporte"] = df_solo_retraso[
-            "Detalle_Reporte"
-        ].fillna("-")
-      else:
-        df_solo_retraso["Estado_Reporte"] = "Sin Reporte"
-        df_solo_retraso["Detalle_Reporte"] = "-"
+  # DEFINICIÓN DE PESTAÑAS PERMANENTES
+  tabs_nombres = [
+      "📋 Vencidas y Vigentes",
+      "📅 Rendimiento Acumulado Rango de Fechas",
+      "📊 Metas y Gráficos (95% / 90%)",
+      "🏆 Ranking Conductores",
+      "🏢 Rendimiento por Sucursales",
+      "⏱️ Finalizadas con Retraso",
+      "📝 Reportar FO",
+      "📊 Reportes de FO para el Mandante",
+      "📈 Evolución Histórica",
+  ]
 
-      sucursales_retraso = sorted(
-          df_solo_retraso["SUCURSAL"].dropna().unique().tolist()
+  (
+      tab_vencidas_vigentes,
+      tab_rango_fechas,
+      tab_metas_graficos,
+      tab_ranking,
+      tab_sucursales,
+      tab_retraso,
+      tab_reportar,
+      tab_mandante,
+      tab_historico,
+  ) = st.tabs(tabs_nombres)
+
+  # PESTAÑA 1: VENCIDAS Y VIGENTES
+  with tab_vencidas_vigentes:
+    if not df_cruce.empty:
+      st.subheader("📋 Tabla Unificada de Vencidas y Vigentes")
+      col_f1, col_f2 = st.columns(2)
+      with col_f1:
+        est_opts = df_cruce["Estado de la ruta"].unique()
+        estado_sel = st.multiselect("Filtrar Estado de la Ruta:", options=est_opts, default=est_opts)
+      with col_f2:
+        suc_opts = df_cruce["SUCURSAL"].unique()
+        sucursal_sel = st.multiselect("Filtrar Sucursal:", options=suc_opts, default=suc_opts)
+
+      df_vv_filtrado = df_cruce[df_cruce["Estado de la ruta"].isin(estado_sel)]
+      if sucursal_sel:
+        df_vv_filtrado = df_vv_filtrado[df_vv_filtrado["SUCURSAL"].isin(sucursal_sel)]
+
+      st.dataframe(
+          df_vv_filtrado.style.map(color_filas_estado, subset=["Estado de la ruta"]),
+          use_container_width=True,
+          height=500,
       )
 
-      sucursales_sel_ret = st.multiselect(
-          "🔍 Filtrar por Sucursal(es):",
-          options=sucursales_retraso,
-          default=sucursales_retraso,
-          key="ms_sucursales_retraso_fijo",
-          help="Busca o selecciona sucursales para filtrar la vista.",
+      dict_met_export = {
+          "Fecha_Consulta": fecha_consultada,
+          "Total_FO": val_tot,
+          "FO_Integradas": val_int,
+          "A_Tiempo": val_at,
+          "Con_Retraso": val_ret,
+          "Vigentes": val_vig,
+          "Vencidas": val_ven,
+          "FO_Reportadas": val_rep,
+          "FO_Con_Evento": val_evt,
+          "Retrasos_Reportados": val_ret_rep,
+          "Pct_A_Tiempo": pct_at,
+          "Pct_Vencidas": pct_v,
+      }
+      bytes_excel = generar_excel_descarga(df_vv_filtrado, dict_met_export, df_ranking)
+      st.download_button(
+          label="📥 Descargar Excel Vencidas y Vigentes",
+          data=bytes_excel,
+          file_name=f"Vencidas_y_Vigentes_{datetime.now().strftime('%Y%m%d')}.xlsx",
+          mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          type="primary",
       )
-
-      if sucursales_sel_ret:
-        df_solo_retraso = df_solo_retraso[
-            df_solo_retraso["SUCURSAL"].isin(sucursales_sel_ret)
-        ]
-
-      if not df_solo_retraso.empty:
-        df_mostrar_retraso = df_solo_retraso.copy()
-
-        if "Fin plan" not in df_mostrar_retraso.columns:
-          if "Fin Planificado" in df_mostrar_retraso.columns:
-            df_mostrar_retraso["Fin plan"] = df_mostrar_retraso[
-                "Fin Planificado"
-            ]
-          else:
-            df_mostrar_retraso["Fin plan"] = "-"
-
-        def resolver_fin_real_y_desviacion(row):
-          f_plan = row.get("Fin plan") or row.get("Fin Planificado") or "-"
-          f_real = row.get("Fin real") or row.get("Fin Real") or "-"
-          desv = row.get("Desviación") or "-"
-
-          f_real_str = str(f_real).strip()
-          desv_str = str(desv).strip()
-
-          if f_real_str in ["", "-", "nan", "None"] and desv_str not in [
-              "",
-              "-",
-              "nan",
-              "None",
-          ]:
-            f_real_str = calcular_fin_real_automatico(f_plan, desv_str)
-
-          if desv_str in ["", "-", "nan", "None"] and f_real_str not in [
-              "",
-              "-",
-              "nan",
-              "None",
-          ]:
-            desv_str = calcular_desviacion_automatica(f_plan, f_real_str)
-
-          return pd.Series([f_real_str, desv_str])
-
-        df_mostrar_retraso[["Fin real", "Desviación"]] = (
-            df_mostrar_retraso.apply(resolver_fin_real_y_desviacion, axis=1)
-        )
-
-        df_mostrar_retraso["Desfase_Minutos"] = df_mostrar_retraso[
-            "Desviación"
-        ].apply(desviacion_a_minutos)
-        minutos_validos = df_mostrar_retraso["Desfase_Minutos"].dropna()
-
-        promedio_desfase_str = "-"
-        if len(minutos_validos) > 0:
-          prom_minutos = minutos_validos.mean()
-          promedio_desfase_str = minutos_a_formato_horas(prom_minutos)
-
-        # RESUMEN DE RETRASOS REPORTADOS VS NO REPORTADOS
-        num_ret_totales = len(df_mostrar_retraso)
-        num_ret_con_rep = len(df_mostrar_retraso[df_mostrar_retraso["Estado_Reporte"] == "🚨 REPORTADA"])
-        pct_ret_con_rep = (num_ret_con_rep / num_ret_totales * 100) if num_ret_totales > 0 else 0.0
-
-        c_ret_kpi1, c_ret_kpi2 = st.columns(2)
-        with c_ret_kpi1:
-          st.markdown(
-              f'<div class="kpi-card kpi-warning"><div class="kpi-title">⏱️'
-              ' Promedio General de Desfase</div><div'
-              f' class="kpi-value">{promedio_desfase_str}</div><div'
-              ' class="kpi-sub" style="color: #e67e22;">Calculado sobre'
-              f" {len(minutos_validos)} FO con retraso</div></div>",
-              unsafe_allow_html=True,
-          )
-        with c_ret_kpi2:
-          st.markdown(
-              f'<div class="kpi-card kpi-purple"><div class="kpi-title">🚨'
-              ' Retrasos Justificados / Reportados</div><div'
-              f' class="kpi-value">{pct_ret_con_rep:.1f}%</div><div'
-              ' class="kpi-sub" style="color: #8e44ad;">'
-              f"{num_ret_con_rep} de {num_ret_totales} FO con retraso tienen"
-              " reporte</div></div>",
-              unsafe_allow_html=True,
-          )
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        c_ret_g1, c_ret_g2 = st.columns(2)
-
-        with c_ret_g1:
-          df_suc_ret = (
-              df_mostrar_retraso.groupby("SUCURSAL")
-              .size()
-              .reset_index(name="Cantidad Retrasos")
-              .sort_values(by="Cantidad Retrasos", ascending=False)
-          )
-          fig_bar_ret = px.bar(
-              df_suc_ret,
-              x="SUCURSAL",
-              y="Cantidad Retrasos",
-              text="Cantidad Retrasos",
-              title="Cantidad de FO con Retraso por Sucursal",
-              color="SUCURSAL",
-              color_discrete_sequence=px.colors.qualitative.Set2,
-          )
-          fig_bar_ret.update_traces(textposition="outside")
-          st.plotly_chart(fig_bar_ret, use_container_width=True)
-
-        with c_ret_g2:
-          fig_pie_ret = px.pie(
-              df_suc_ret,
-              names="SUCURSAL",
-              values="Cantidad Retrasos",
-              title="Distribución % de Retrasos por Sucursal",
-              hole=0.4,
-              color_discrete_sequence=px.colors.qualitative.Set2,
-          )
-          st.plotly_chart(fig_pie_ret, use_container_width=True)
-
-        st.divider()
-        st.markdown("##### 📋 Listado Detallado de FO Finalizadas con Retraso")
-
-        cols_orden_foto = [
-            "FO",
-            "Fin plan",
-            "Fin real",
-            "Desviación",
-            "Conductor",
-            "Estado_Reporte",
-            "Detalle_Reporte",
-            "SUCURSAL",
-            "RESPONSABLE",
-            "ORIGEN",
-            "DESTINO",
-        ]
-
-        cols_existentes = [
-            c for c in cols_orden_foto if c in df_mostrar_retraso.columns
-        ]
-
-        st.dataframe(
-            df_mostrar_retraso[cols_existentes].style.map(
-                color_filas_estado, subset=["Estado_Reporte"]
-            ),
-            use_container_width=True,
-            height="auto",
-        )
-
-        excel_bytes_retraso = generar_excel_solo_tabla(
-            df_mostrar_retraso[cols_existentes],
-            nombre_hoja="Finalizadas_Con_Retraso",
-        )
-        st.download_button(
-            label="📥 Descargar Informe en Excel (Finalizadas con Retraso)",
-            data=excel_bytes_retraso,
-            file_name=f"Informe_Retrasos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary",
-        )
-      else:
-        st.warning(
-            "⚠️ No existen registros con retraso para las sucursales"
-            " seleccionadas."
-        )
     else:
-      st.success("🎉 No hay retrasos registrados.")
-  else:
-    st.info("👈 Carga y procesa un archivo Drivin para visualizar los datos.")
+      st.info("👈 Carga y procesa archivos desde el menú lateral para ver la tabla.")
 
-# --- PESTAÑA: REPORTAR Y EDITAR FO ---
-with tab_reportar:
-  st.subheader("🚨 Gestión y Reporte de Inconsistencias en FO")
-  col_form, col_hist = st.columns([1, 1])
+  # PESTAÑA 2: RANGO DE FECHAS
+  with tab_rango_fechas:
+    st.subheader("📅 Filtrado de FO por Rango de Fechas (Basado en Servicios Mensuales)")
+    if not df_cruce.empty:
+      df_rf = df_cruce.copy()
 
-  with col_form:
-    st.markdown("#### 📝 Crear / Editar Reporte de FO")
+      def parsear_fecha(val):
+        if pd.isna(val) or str(val).strip() in ["-", "", "nan", "None"]:
+          return pd.NaT
+        try:
+          return pd.to_datetime(val, dayfirst=True, errors="coerce")
+        except Exception:
+          return pd.NaT
 
+      df_rf["Fecha_Inicio_dt"] = (
+          df_rf["Fin plan"].apply(parsear_fecha)
+          if "Fin plan" in df_rf.columns
+          else df_rf["Fin Planificado"].apply(parsear_fecha)
+      )
+
+      df_rf["Fecha_Final_Eval"] = df_rf["Fecha_Inicio_dt"].dt.date
+      df_valid_dates = df_rf.dropna(subset=["Fecha_Final_Eval"])
+
+      if not df_valid_dates.empty:
+        min_f_plan = df_valid_dates["Fecha_Final_Eval"].min()
+        max_f_plan = df_valid_dates["Fecha_Final_Eval"].max()
+
+        col_rf1, col_rf2 = st.columns(2)
+        with col_rf1:
+          f_desde = st.date_input("📅 Fecha Desde:", value=min_f_plan, key="f_desde_plan")
+        with col_rf2:
+          f_hasta = st.date_input("📅 Fecha Hasta:", value=max_f_plan, key="f_hasta_plan")
+
+        if f_desde > f_hasta:
+          st.error("⚠️ La 'Fecha Desde' no puede ser posterior a la 'Fecha Hasta'.")
+        else:
+          dias_rango = (f_hasta - f_desde).days + 1
+          servicios_proporcionales_rango = max(1, int((servicios_mensuales_admin / 30) * dias_rango))
+
+          df_filtrado_desviaciones = df_rf[(df_rf["Fecha_Final_Eval"] >= f_desde) & (df_rf["Fecha_Final_Eval"] <= f_hasta)]
+
+          ret_r = len(df_filtrado_desviaciones[df_filtrado_desviaciones["Estado de la ruta"] == "Finalizada con Retraso"])
+          ven_r = len(df_filtrado_desviaciones[df_filtrado_desviaciones["Estado de la ruta"] == "Vencida"])
+          vig_r = len(df_filtrado_desviaciones[df_filtrado_desviaciones["Estado de la ruta"] == "Vigente"])
+          rec_r = len(df_filtrado_desviaciones[df_filtrado_desviaciones["Estado de la ruta"] == "Rechazada"])
+
+          total_r = max(servicios_proporcionales_rango, (ret_r + ven_r + vig_r + rec_r))
+          at_r = max(0, total_r - (ret_r + ven_r + vig_r + rec_r))
+
+          pct_at_r = (at_r / total_r * 100) if total_r > 0 else 0.0
+          pct_v_r = (ven_r / total_r * 100) if total_r > 0 else 0.0
+
+          st.markdown(f"##### 📊 Resultados para los **{dias_rango} días del periodo** (**{f_desde.strftime('%d/%m/%Y')}** al **{f_hasta.strftime('%d/%m/%Y')}**)")
+          rk1, rk2, rk3, rk4, rk5 = st.columns(5)
+          with rk1:
+            st.markdown(f'<div class="kpi-card kpi-info"><div class="kpi-title">Total Estimado</div><div class="kpi-value">{total_r}</div></div>', unsafe_allow_html=True)
+          with rk2:
+            st.markdown(f'<div class="kpi-card kpi-success"><div class="kpi-title">% On-Time Est.</div><div class="kpi-value">{pct_at_r:.1f}%</div></div>', unsafe_allow_html=True)
+          with rk3:
+            st.markdown(f'<div class="kpi-card kpi-warning"><div class="kpi-title">Con Retraso</div><div class="kpi-value">{(ret_r/total_r*100):.1f}%</div></div>', unsafe_allow_html=True)
+          with rk4:
+            st.markdown(f'<div class="kpi-card kpi-danger"><div class="kpi-title">% Vencidas</div><div class="kpi-value">{pct_v_r:.1f}%</div></div>', unsafe_allow_html=True)
+          with rk5:
+            st.markdown(f'<div class="kpi-card kpi-info"><div class="kpi-title">FO Vigentes</div><div class="kpi-value">{vig_r}</div></div>', unsafe_allow_html=True)
+
+          st.divider()
+          gr1, gr2 = st.columns(2)
+          with gr1:
+            df_bar_plan = df_filtrado_desviaciones.groupby(["Fecha_Final_Eval", "Estado de la ruta"]).size().reset_index(name="Cantidad")
+            fig_r_bar = px.bar(df_bar_plan, x="Fecha_Final_Eval", y="Cantidad", color="Estado de la ruta", title="Desviaciones por Fecha Planificada", barmode="stack")
+            st.plotly_chart(fig_r_bar, use_container_width=True)
+          with gr2:
+            df_pie_data = pd.DataFrame({"Estado": ["A Tiempo (Est.)", "Con Retraso", "Vencida", "Vigente"], "Cantidad": [at_r, ret_r, ven_r, vig_r]})
+            fig_r_pie = px.pie(df_pie_data[df_pie_data["Cantidad"] > 0], names="Estado", values="Cantidad", title="Distribución Proporcional", hole=0.4)
+            st.plotly_chart(fig_r_pie, use_container_width=True)
+
+          st.dataframe(df_filtrado_desviaciones.style.map(color_filas_estado, subset=["Estado de la ruta"]), use_container_width=True)
+      else:
+        st.warning("No se pudieron interpretar fechas válidas.")
+
+  # PESTAÑA 3: METAS Y GRÁFICOS
+  with tab_metas_graficos:
+    st.subheader("📊 Evaluación de Cumplimiento de Metas Operativas (95% y 90%)")
+    if not df_cruce.empty:
+      cf1, cf2 = st.columns(2)
+      with cf1:
+        suc_disponibles = sorted(df_cruce["SUCURSAL"].unique().tolist())
+        suc_seleccionadas = st.multiselect("Filtrar por Sucursal(es):", options=suc_disponibles, default=suc_disponibles, key="filter_suc_metas")
+      with cf2:
+        resp_disponibles = sorted(df_cruce["RESPONSABLE"].unique().tolist())
+        resp_seleccionados = st.multiselect("Filtrar por Responsable KCC:", options=resp_disponibles, default=resp_disponibles, key="filter_resp_metas")
+
+      df_m_filtrado = df_cruce[(df_cruce["SUCURSAL"].isin(suc_seleccionadas)) & (df_cruce["RESPONSABLE"].isin(resp_seleccionados))]
+      tot_f = len(df_m_filtrado)
+      if tot_f > 0:
+        cnt_at = len(df_m_filtrado[df_m_filtrado["Estado de la ruta"].isin(["Finalizada a tiempo", "A Tiempo"])])
+        cnt_ret = len(df_m_filtrado[df_m_filtrado["Estado de la ruta"] == "Finalizada con Retraso"])
+        cnt_ven = len(df_m_filtrado[df_m_filtrado["Estado de la ruta"] == "Vencida"])
+        cnt_vig = len(df_m_filtrado[df_m_filtrado["Estado de la ruta"] == "Vigente"])
+
+        calc_tot = val_tot if (len(suc_seleccionadas) == len(suc_disponibles) and len(resp_seleccionados) == len(resp_disponibles)) else tot_f
+        calc_at = val_at if (len(suc_seleccionadas) == len(suc_disponibles) and len(resp_seleccionados) == len(resp_disponibles)) else cnt_at
+        calc_ret = val_ret if (len(suc_seleccionadas) == len(suc_disponibles) and len(resp_seleccionados) == len(resp_disponibles)) else cnt_ret
+
+        pct_fin_tot = ((calc_at + calc_ret) / calc_tot * 100) if calc_tot > 0 else 0.0
+        pct_a_tiempo_tot = (calc_at / calc_tot * 100) if calc_tot > 0 else 0.0
+
+        g1, g2 = st.columns(2)
+        with g1:
+          fig_g95 = go.Figure(go.Indicator(mode="gauge+number+delta", value=pct_fin_tot, title={"text": "% Finalizadas (Meta 95%)"}, delta={"reference": 95.0}))
+          st.plotly_chart(fig_g95, use_container_width=True)
+        with g2:
+          fig_g90 = go.Figure(go.Indicator(mode="gauge+number+delta", value=pct_a_tiempo_tot, title={"text": "% A Tiempo (Meta 90%)"}, delta={"reference": 90.0}))
+          st.plotly_chart(fig_g90, use_container_width=True)
+
+  # PESTAÑA 4: RANKING CONDUCTORES
+  with tab_ranking:
+    st.subheader("🏆 Ranking de Cumplimiento de Conductores")
+    if df_ranking is not None and not df_ranking.empty:
+      st.dataframe(df_ranking, use_container_width=True, height=500)
+    else:
+      st.info("Sin datos de ranking actualmente.")
+
+  # PESTAÑA 5: SUCURSALES
+  with tab_sucursales:
+    st.subheader("🏢 Rendimiento por Sucursales")
+    if not df_cruce.empty:
+      fig_suc = px.bar(df_cruce, x="SUCURSAL", color="Estado de la ruta", barmode="group", text_auto=True)
+      st.plotly_chart(fig_suc, use_container_width=True)
+
+  # PESTAÑA 6: RETRASO
+  with tab_retraso:
+    st.subheader("⏱️ FO Finalizadas con Retraso")
+    if not df_cruce.empty:
+      df_solo_retraso = df_cruce[df_cruce["Estado de la ruta"] == "Finalizada con Retraso"].copy()
+      if not df_solo_retraso.empty:
+        st.dataframe(df_solo_retraso.style.map(color_filas_estado, subset=["Estado_Reporte"]), use_container_width=True, height=500)
+
+  # PESTAÑA 7: REPORTAR FO (FORMULARIO INDEPENDIENTE)
+  with tab_reportar:
+    st.subheader("📝 Formulario de Registro y Edición de Reportes FO")
     df_reps_actuales = cargar_reportes_fo()
     opciones_modo = ["➕ Nuevo Reporte"]
     if not df_reps_actuales.empty:
       opciones_modo.append("✏️ Editar Reporte Existente")
 
-    modo_reporte = st.radio(
-        "Acción a realizar:", opciones_modo, horizontal=True
-    )
-
-    lista_sucursales = [
-        "La Negra",
-        "La Chimba",
-        "Copiapó",
-        "Coquimbo",
-        "Santiago",
-        "Otra",
-    ]
-
+    modo_reporte = st.radio("Acción a realizar:", opciones_modo, horizontal=True)
+    lista_sucursales = ["La Negra", "La Chimba", "Copiapó", "Coquimbo", "Santiago", "Otra"]
     lista_problemas = cargar_opciones_problemas()
     lista_coordinadores_komatsu = cargar_opciones_coordinadores()
 
     if modo_reporte == "➕ Nuevo Reporte":
       with st.form(key="form_rep_nuevo", clear_on_submit=True):
-        fo_in = st.text_input("Número de FO:")
-        suc_in = st.selectbox("Sucursal:", lista_sucursales)
-        prob_in = st.selectbox("Problema / Inconsistencia:", lista_problemas)
-        coord_sel = st.selectbox("Coordinador Komatsu / KCC:", lista_coordinadores_komatsu)
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+          fo_in = st.text_input("Número de FO:")
+          suc_in = st.selectbox("Sucursal:", lista_sucursales)
+          prob_in = st.selectbox("Problema / Inconsistencia:", lista_problemas)
+        with col_f2:
+          coord_sel = st.selectbox("Coordinador Komatsu / KCC:", lista_coordinadores_komatsu)
+          resp_in = st.text_input("Reportado por (Usuario SAE):")
+          arch_in = st.file_uploader("Adjuntar Respaldo (Imagen/PDF):", type=["png", "jpg", "jpeg", "pdf", "msg", "eml", "txt"])
 
-        resp_in = st.text_input("Reportado por (Usuario SAE):")
         obs_in = st.text_area("Observaciones / Justificación:")
-        arch_in = st.file_uploader(
-            "Adjuntar Respaldo (Imagen/PDF):",
-            type=["png", "jpg", "jpeg", "pdf", "msg", "eml", "txt"],
-        )
-
-        if st.form_submit_button("📩 Guardar Nuevo Reporte"):
+        if st.form_submit_button("📩 Guardar Nuevo Reporte", type="primary", use_container_width=True):
           if fo_in and resp_in:
-            guardar_reporte_fo(
-                fo_in,
-                suc_in,
-                prob_in,
-                coord_sel,
-                resp_in,
-                obs_in,
-                arch_in,
-            )
-
-            if (
-                "df_cruce" in st.session_state
-                and not st.session_state.df_cruce.empty
-            ):
-              guardar_cache_global(
-                  st.session_state.totales,
-                  st.session_state.df_cruce,
-                  st.session_state.df_ranking,
-              )
-
+            guardar_reporte_fo(fo_in, suc_in, prob_in, coord_sel, resp_in, obs_in, arch_in)
             st.success("✅ Reporte guardado con éxito.")
             st.rerun()
-          else:
-            st.error("⚠️ Debes completar la FO y la persona que reporta.")
 
     else:
-      fos_reportadas_list = [
-          str(f) for f in df_reps_actuales["FO"].unique() if str(f).strip()
-      ]
-      fo_a_editar = st.selectbox(
-          "Seleccionar FO a Editar:", options=fos_reportadas_list
-      )
-
+      fos_reportadas_list = [str(f) for f in df_reps_actuales["FO"].unique() if str(f).strip()]
+      fo_a_editar = st.selectbox("Seleccionar FO a Editar:", options=fos_reportadas_list)
       fo_a_editar_limpia = limpiar_fo_str(fo_a_editar)
-      row_edit = df_reps_actuales[
-          df_reps_actuales["FO"] == fo_a_editar_limpia
-      ].iloc[-1]
+      row_edit = df_reps_actuales[df_reps_actuales["FO"] == fo_a_editar_limpia].iloc[-1]
 
-      idx_suc = (
-          lista_sucursales.index(row_edit["Sucursal"])
-          if row_edit["Sucursal"] in lista_sucursales
-          else 0
-      )
-      
-      prob_actual = row_edit["Tipo_Problema"]
-      idx_prob = (
-          lista_problemas.index(prob_actual)
-          if prob_actual in lista_problemas
-          else 0
-      )
-
+      idx_suc = lista_sucursales.index(row_edit["Sucursal"]) if row_edit["Sucursal"] in lista_sucursales else 0
+      idx_prob = lista_problemas.index(row_edit["Tipo_Problema"]) if row_edit["Tipo_Problema"] in lista_problemas else 0
       coord_actual = str(row_edit.get("Coordinador_Komatsu", "-"))
-      idx_coord = (
-          lista_coordinadores_komatsu.index(coord_actual)
-          if coord_actual in lista_coordinadores_komatsu
-          else 0
-      )
+      idx_coord = lista_coordinadores_komatsu.index(coord_actual) if coord_actual in lista_coordinadores_komatsu else 0
 
       with st.form(key="form_rep_editar"):
         st.info(f"Modificando datos para la **FO {fo_a_editar_limpia}**")
-        suc_edit = st.selectbox("Sucursal:", lista_sucursales, index=idx_suc)
-        prob_edit = st.selectbox(
-            "Problema / Inconsistencia:", lista_problemas, index=idx_prob
-        )
-        coord_edit_sel = st.selectbox(
-            "Coordinador Komatsu / KCC:",
-            lista_coordinadores_komatsu,
-            index=idx_coord,
-        )
+        col_e1, col_e2 = st.columns(2)
+        with col_e1:
+          suc_edit = st.selectbox("Sucursal:", lista_sucursales, index=idx_suc)
+          prob_edit = st.selectbox("Problema / Inconsistencia:", lista_problemas, index=idx_prob)
+          coord_edit_sel = st.selectbox("Coordinador Komatsu / KCC:", lista_coordinadores_komatsu, index=idx_coord)
+        with col_e2:
+          resp_edit = st.text_input("Reportado por (Usuario SAE):", value=str(row_edit.get("Responsable", "")))
+          arch_edit = st.file_uploader("Reemplazar Respaldo (Opcional):", type=["png", "jpg", "jpeg", "pdf", "msg", "eml", "txt"])
 
-        resp_edit = st.text_input(
-            "Reportado por (Usuario SAE):",
-            value=str(row_edit.get("Responsable", "")),
-        )
-        obs_edit = st.text_area(
-            "Observaciones:",
-            value=str(row_edit.get("Detalle_Observacion", "")),
-        )
-        arch_edit = st.file_uploader(
-            "Reemplazar Respaldo (Opcional):",
-            type=["png", "jpg", "jpeg", "pdf", "msg", "eml", "txt"],
-        )
+        obs_edit = st.text_area("Observaciones:", value=str(row_edit.get("Detalle_Observacion", "")))
 
         c_ed1, c_ed2 = st.columns(2)
         with c_ed1:
-          btn_actualizar = st.form_submit_button("🔄 Guardar Cambios")
+          btn_actualizar = st.form_submit_button("🔄 Guardar Cambios", type="primary", use_container_width=True)
         with c_ed2:
-          btn_eliminar = st.form_submit_button("🔥 Eliminar Reporte")
+          btn_eliminar = st.form_submit_button("🔥 Eliminar Reporte", use_container_width=True)
 
         if btn_actualizar:
-          if editar_reporte_fo(
-              fo_a_editar_limpia,
-              suc_edit,
-              prob_edit,
-              coord_edit_sel,
-              resp_edit,
-              obs_edit,
-              arch_edit,
-          ):
+          if editar_reporte_fo(fo_a_editar_limpia, suc_edit, prob_edit, coord_edit_sel, resp_edit, obs_edit, arch_edit):
             st.success("✅ Reporte actualizado con éxito.")
             st.rerun()
-          else:
-            st.error("❌ Ocurrió un error al intentar editar.")
 
         if btn_eliminar:
           if eliminar_reporte_fo(fo_a_editar_limpia):
             st.success("🗑️ Reporte eliminado.")
             st.rerun()
 
-  with col_hist:
-    st.markdown("#### 📊 Análisis de Inconsistencias y Reportes para el Mandante")
+  # PESTAÑA 8: REPORTES PARA EL MANDANTE (VISTA EJECUTIVA Y GRÁFICOS)
+  with tab_mandante:
+    st.subheader("📊 Informe Ejecutivo de Inconsistencias para el Mandante")
     df_reps = cargar_reportes_fo()
     if not df_reps.empty:
-
-      # --- NUEVA SECCIÓN DE GRÁFICOS EJECUTIVOS PARA EL MANDANTE ---
       df_graf = df_reps.copy()
       df_graf["Tipo_Problema"] = df_graf["Tipo_Problema"].fillna("Sin especificar")
-      df_graf["Sucursal"] = df_graf["Sucursal"].fillna("No definida")
       df_graf["Coordinador_Komatsu"] = df_graf["Coordinador_Komatsu"].fillna("Sin asignar")
 
-      # 1. Gráfico por Tipo de Problema / Inconsistencia
-      df_prob_cnt = (
-          df_graf.groupby("Tipo_Problema")
-          .size()
-          .reset_index(name="Cantidad")
-          .sort_values(by="Cantidad", ascending=True)
-      )
-      fig_prob = px.bar(
-          df_prob_cnt,
-          x="Cantidad",
-          y="Tipo_Problema",
-          orientation="h",
-          text="Cantidad",
-          title="📌 FO Reportadas por Tipo de Inconsistencia / Problema",
-          color="Tipo_Problema",
-          color_discrete_sequence=px.colors.qualitative.Vivid,
-      )
-      fig_prob.update_traces(textposition="outside")
-      fig_prob.update_layout(showlegend=False, height=320)
-      st.plotly_chart(fig_prob, use_container_width=True)
-
-      # 2. Gráficos Distribución por Sucursal y Coordinador
       g_col1, g_col2 = st.columns(2)
       with g_col1:
-        df_suc_cnt = (
-            df_graf.groupby("Sucursal")
-            .size()
-            .reset_index(name="Cantidad")
-        )
-        fig_suc_rep = px.pie(
-            df_suc_cnt,
-            names="Sucursal",
-            values="Cantidad",
-            title="🏢 Inconsistencias por Sucursal",
-            hole=0.4,
-            color_discrete_sequence=px.colors.qualitative.Pastel,
-        )
-        fig_suc_rep.update_layout(height=300)
-        st.plotly_chart(fig_suc_rep, use_container_width=True)
+        df_prob_cnt = df_graf.groupby("Tipo_Problema").size().reset_index(name="Cantidad").sort_values(by="Cantidad", ascending=True)
+        fig_prob = px.bar(df_prob_cnt, x="Cantidad", y="Tipo_Problema", orientation="h", text="Cantidad", title="📌 FO Reportadas por Problema")
+        fig_prob.update_traces(textposition="outside")
+        st.plotly_chart(fig_prob, use_container_width=True)
 
       with g_col2:
-        df_coord_cnt = (
-            df_graf.groupby("Coordinador_Komatsu")
-            .size()
-            .reset_index(name="Cantidad")
-            .sort_values(by="Cantidad", ascending=False)
-        )
-        fig_coord_rep = px.bar(
-            df_coord_cnt,
-            x="Coordinador_Komatsu",
-            y="Cantidad",
-            text="Cantidad",
-            title="👤 FO por Coordinador Komatsu / KCC",
-            color_discrete_sequence=["#8e44ad"],
-        )
+        df_coord_cnt = df_graf.groupby("Coordinador_Komatsu").size().reset_index(name="Cantidad").sort_values(by="Cantidad", ascending=True)
+        fig_coord_rep = px.bar(df_coord_cnt, x="Cantidad", y="Coordinador_Komatsu", orientation="h", text="Cantidad", title="👤 FO por Coordinador Komatsu")
         fig_coord_rep.update_traces(textposition="outside")
-        fig_coord_rep.update_layout(height=300, xaxis_title="", yaxis_title="Cantidad")
+        fig_coord_rep.update_layout(margin=dict(l=150, r=20, t=40, b=40))
         st.plotly_chart(fig_coord_rep, use_container_width=True)
 
       st.divider()
       st.markdown("##### 📋 Registro Detallado de FO Reportadas")
-      st.dataframe(
-          df_reps[[
-              "Fecha_Reporte",
-              "FO",
-              "Sucursal",
-              "Tipo_Problema",
-              "Coordinador_Komatsu",
-              "Responsable",
-              "Detalle_Observacion",
-          ]],
-          use_container_width=True,
-          height="auto",
-      )
+      st.dataframe(df_reps, use_container_width=True, height=400)
 
-      excel_bytes_reportes = generar_excel_solo_tabla(
-          df_reps, nombre_hoja="FO_Reportadas"
-      )
+      excel_bytes_reportes = generar_excel_solo_tabla(df_reps, nombre_hoja="FO_Reportadas")
       st.download_button(
           label="📥 Descargar Registro de FO Reportadas en Excel",
           data=excel_bytes_reportes,
@@ -2614,24 +1967,22 @@ with tab_reportar:
       )
 
       st.divider()
-      st.markdown("##### 🔍 Consultar y Visualizar Respaldo")
-      lista_fos_reportadas = [
-          str(f) for f in df_reps["FO"].unique() if str(f).strip()
-      ]
-      fo_sel_ver = st.selectbox(
-          "Seleccionar FO para ver la imagen:",
-          options=lista_fos_reportadas,
-          key="sb_ver_img",
-      )
+      st.markdown("##### 🔍 Consultar y Visualizar Respaldo Adjunto")
+      lista_fos_reportadas = [str(f) for f in df_reps["FO"].unique() if str(f).strip()]
+      fo_sel_ver = st.selectbox("Seleccionar FO para revisar detalles y respaldo:", options=lista_fos_reportadas, key="sb_ver_img_mandante")
 
       fo_ver_limpia = limpiar_fo_str(fo_sel_ver)
       row_ver = df_reps[df_reps["FO"] == fo_ver_limpia].iloc[-1]
-      st.write(f"**Fecha Reporte:** {row_ver.get('Fecha_Reporte', '-')}")
-      st.write(
-          "**Coordinador Komatsu / KCC:**"
-          f" {row_ver.get('Coordinador_Komatsu', '-')}"
-      )
-      st.write(f"**Reportado por:** {row_ver.get('Responsable', '-')}")
+      
+      col_d1, col_d2 = st.columns(2)
+      with col_d1:
+        st.write(f"**Fecha Reporte:** {row_ver.get('Fecha_Reporte', '-')}")
+        st.write(f"**Coordinador Komatsu / KCC:** {row_ver.get('Coordinador_Komatsu', '-')}")
+        st.write(f"**Reportado por:** {row_ver.get('Responsable', '-')}")
+      with col_d2:
+        st.write(f"**Sucursal:** {row_ver.get('Sucursal', '-')}")
+        st.write(f"**Inconsistencia:** {row_ver.get('Tipo_Problema', '-')}")
+
       st.write(f"**Observación:** {row_ver.get('Detalle_Observacion', '-')}")
 
       archivo_nombre = str(row_ver.get("Archivo_Pantallazo", "Sin respaldo"))
@@ -2640,124 +1991,38 @@ with tab_reportar:
         if os.path.exists(path_img_local):
           ext_ver = os.path.splitext(archivo_nombre)[1].lower()
           if ext_ver in [".png", ".jpg", ".jpeg"]:
-            st.image(
-                path_img_local,
-                caption=f"Respaldo FO {fo_ver_limpia}",
-                use_container_width=True,
-            )
+            st.image(path_img_local, caption=f"Respaldo FO {fo_ver_limpia}", use_container_width=True)
           else:
             with open(path_img_local, "rb") as f_down:
-              st.download_button(
-                  label=f"📥 Descargar Archivo Respaldo ({ext_ver.upper()})",
-                  data=f_down,
-                  file_name=archivo_nombre,
-              )
+              st.download_button(label=f"📥 Descargar Archivo Respaldo ({ext_ver.upper()})", data=f_down, file_name=archivo_nombre)
         else:
-          st.warning(
-              "⚠️ No se encontró el archivo de imagen en la carpeta local."
-          )
+          st.warning("⚠️ No se encontró el archivo de imagen en la carpeta local.")
       else:
         st.info("ℹ️ Este reporte no adjuntó ningún archivo de respaldo.")
     else:
-      st.caption("Aún no hay reportes de FO registrados.")
+      st.info("Aún no hay reportes de FO registrados para mostrar al mandante.")
 
-# --- PESTAÑA: EVOLUCIÓN HISTÓRICA CON GRÁFICO ---
-with tab_historico:
-  st.subheader("📈 Evolución Histórica de Cumplimiento")
-  df_hist = cargar_historico()
-  df_papelera = cargar_papelera()
+  # PESTAÑA 9: HISTÓRICO Y PAPELERA
+  with tab_historico:
+    st.subheader("📈 Evolución Histórica de Cumplimiento")
+    df_hist = cargar_historico()
+    df_papelera = cargar_papelera()
 
-  if not df_hist.empty:
-    df_hist_val = df_hist[df_hist["FO_Totales"] > 0].copy()
+    if not df_hist.empty:
+      df_hist_val = df_hist[df_hist["FO_Totales"] > 0].copy()
+      if not df_hist_val.empty:
+        fig_hist = go.Figure()
+        fig_hist.add_trace(go.Scatter(x=df_hist_val["Fecha_Registro"], y=df_hist_val["Pct_A_Tiempo"], mode="lines+markers+text", name="% A Tiempo", text=[f"{v:.1f}%" for v in df_hist_val["Pct_A_Tiempo"]], textposition="top center"))
+        fig_hist.add_trace(go.Scatter(x=df_hist_val["Fecha_Registro"], y=df_hist_val["Pct_Vencidas"], mode="lines+markers+text", name="% Vencidas", text=[f"{v:.2f}%" for v in df_hist_val["Pct_Vencidas"]], textposition="bottom center"))
+        st.plotly_chart(fig_hist, use_container_width=True)
 
-    if not df_hist_val.empty:
-      fig_hist = go.Figure()
-
-      fig_hist.add_trace(
-          go.Scatter(
-              x=df_hist_val["Fecha_Registro"],
-              y=df_hist_val["Pct_A_Tiempo"],
-              mode="lines+markers+text",
-              name="% A Tiempo",
-              text=[f"{v:.1f}%" for v in df_hist_val["Pct_A_Tiempo"]],
-              textposition="top center",
-              line=dict(color="#1E88E5", width=3),
-              marker=dict(size=8, symbol="circle"),
-          )
-      )
-
-      fig_hist.add_trace(
-          go.Scatter(
-              x=df_hist_val["Fecha_Registro"],
-              y=df_hist_val["Pct_Vencidas"],
-              mode="lines+markers+text",
-              name="% Vencidas",
-              text=[f"{v:.2f}%" for v in df_hist_val["Pct_Vencidas"]],
-              textposition="bottom center",
-              line=dict(color="#E53935", width=3),
-              marker=dict(size=8, symbol="square"),
-          )
-      )
-
-      fig_hist.add_shape(
-          type="line",
-          x0=df_hist_val["Fecha_Registro"].min(),
-          x1=df_hist_val["Fecha_Registro"].max(),
-          y0=90,
-          y1=90,
-          line=dict(color="#2ECC71", width=2, dash="dash"),
-      )
-      fig_hist.add_annotation(
-          x=df_hist_val["Fecha_Registro"].max(),
-          y=90,
-          text="Meta A Tiempo (≥ 90%)",
-          showarrow=False,
-          yshift=10,
-          font=dict(color="#2ECC71", size=12),
-      )
-
-      fig_hist.add_shape(
-          type="line",
-          x0=df_hist_val["Fecha_Registro"].min(),
-          x1=df_hist_val["Fecha_Registro"].max(),
-          y0=5,
-          y1=5,
-          line=dict(color="#D32F2F", width=2, dash="dot"),
-      )
-      fig_hist.add_annotation(
-          x=df_hist_val["Fecha_Registro"].max(),
-          y=5,
-          text="Límite Vencidas (≤ 5%)",
-          showarrow=False,
-          yshift=10,
-          font=dict(color="#D32F2F", size=12),
-      )
-
-      fig_hist.update_layout(
-          title=(
-              "Evolución por Día Registrado: % A Tiempo vs. % Vencidas con Metas"
-          ),
-          xaxis_title="Fecha de Registro",
-          yaxis_title="Porcentaje (%)",
-          yaxis=dict(range=[0, 105]),
-          legend=dict(
-              orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-          ),
-          height=450,
-          margin=dict(l=40, r=40, t=60, b=40),
-      )
-
-      st.plotly_chart(fig_hist, use_container_width=True)
+      st.dataframe(df_hist, use_container_width=True, height=400)
+    else:
+      st.info("Aún no hay datos guardados en el histórico para graficar.")
 
     st.divider()
-    st.markdown("##### 📋 Tabla Histórico Activo")
-    st.dataframe(df_hist, use_container_width=True, height="auto")
-  else:
-    st.info("Aún no hay datos guardados en el histórico para graficar.")
-
-  st.divider()
-  st.markdown("##### 🗑️ Papelera de Respaldo")
-  if not df_papelera.empty:
-    st.dataframe(df_papelera, use_container_width=True, height="auto")
-  else:
-    st.caption("Papelera vacía.")
+    st.markdown("##### 🗑️ Papelera de Respaldo")
+    if not df_papelera.empty:
+      st.dataframe(df_papelera, use_container_width=True, height=250)
+    else:
+      st.caption("Papelera vacía.")
