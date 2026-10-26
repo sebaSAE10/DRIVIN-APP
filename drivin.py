@@ -1404,7 +1404,7 @@ if st.session_state.get("mostrar_modal_guardar", False):
 
 
 # --- DASHBOARD ---
-st.title("🚚 Drivin SAE")
+st.title("🚚 Dashboard Operativo Drivin")
 
 fecha_encabezado = st.session_state.get("ultima_fecha_act", ultima_fecha_act)
 if fecha_encabezado:
@@ -1585,8 +1585,8 @@ if val_int > 0:
     tab_historico,
 ) = st.tabs([
     "📋 Vencidas y Vigentes",
-    "📅 Simulación MES actual",
-    "📊 Rendimiento KPIS Komatsu",
+    "📅 Rendimiento Acumulado Rango de Fechas",
+    "📊 Metas y Gráficos (95% / 90%)",
     "🏆 Ranking Conductores",
     "🏢 Rendimiento por Sucursales",
     "⏱️ Finalizadas con Retraso",
@@ -2516,9 +2516,77 @@ with tab_reportar:
             st.rerun()
 
   with col_hist:
-    st.markdown("#### 📋 Registro de FO Reportadas")
+    st.markdown("#### 📊 Análisis de Inconsistencias y Reportes para el Mandante")
     df_reps = cargar_reportes_fo()
     if not df_reps.empty:
+
+      # --- NUEVA SECCIÓN DE GRÁFICOS EJECUTIVOS PARA EL MANDANTE ---
+      df_graf = df_reps.copy()
+      df_graf["Tipo_Problema"] = df_graf["Tipo_Problema"].fillna("Sin especificar")
+      df_graf["Sucursal"] = df_graf["Sucursal"].fillna("No definida")
+      df_graf["Coordinador_Komatsu"] = df_graf["Coordinador_Komatsu"].fillna("Sin asignar")
+
+      # 1. Gráfico por Tipo de Problema / Inconsistencia
+      df_prob_cnt = (
+          df_graf.groupby("Tipo_Problema")
+          .size()
+          .reset_index(name="Cantidad")
+          .sort_values(by="Cantidad", ascending=True)
+      )
+      fig_prob = px.bar(
+          df_prob_cnt,
+          x="Cantidad",
+          y="Tipo_Problema",
+          orientation="h",
+          text="Cantidad",
+          title="📌 FO Reportadas por Tipo de Inconsistencia / Problema",
+          color="Tipo_Problema",
+          color_discrete_sequence=px.colors.qualitative.Vivid,
+      )
+      fig_prob.update_traces(textposition="outside")
+      fig_prob.update_layout(showlegend=False, height=320)
+      st.plotly_chart(fig_prob, use_container_width=True)
+
+      # 2. Gráficos Distribución por Sucursal y Coordinador
+      g_col1, g_col2 = st.columns(2)
+      with g_col1:
+        df_suc_cnt = (
+            df_graf.groupby("Sucursal")
+            .size()
+            .reset_index(name="Cantidad")
+        )
+        fig_suc_rep = px.pie(
+            df_suc_cnt,
+            names="Sucursal",
+            values="Cantidad",
+            title="🏢 Inconsistencias por Sucursal",
+            hole=0.4,
+            color_discrete_sequence=px.colors.qualitative.Pastel,
+        )
+        fig_suc_rep.update_layout(height=300)
+        st.plotly_chart(fig_suc_rep, use_container_width=True)
+
+      with g_col2:
+        df_coord_cnt = (
+            df_graf.groupby("Coordinador_Komatsu")
+            .size()
+            .reset_index(name="Cantidad")
+            .sort_values(by="Cantidad", ascending=False)
+        )
+        fig_coord_rep = px.bar(
+            df_coord_cnt,
+            x="Coordinador_Komatsu",
+            y="Cantidad",
+            text="Cantidad",
+            title="👤 FO por Coordinador Komatsu / KCC",
+            color_discrete_sequence=["#8e44ad"],
+        )
+        fig_coord_rep.update_traces(textposition="outside")
+        fig_coord_rep.update_layout(height=300, xaxis_title="", yaxis_title="Cantidad")
+        st.plotly_chart(fig_coord_rep, use_container_width=True)
+
+      st.divider()
+      st.markdown("##### 📋 Registro Detallado de FO Reportadas")
       st.dataframe(
           df_reps[[
               "Fecha_Reporte",
