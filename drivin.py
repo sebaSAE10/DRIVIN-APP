@@ -59,6 +59,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# RUTAS DE ARCHIVOS BASE EN GITHUB Y ARCHIVOS DEL SISTEMA
+DRIVIN_BASE_FILE = "drivin_base.xlsx"
+SAE_BASE_FILE = "sae_base.xlsx"
+SMARTSHEET_BASE_FILE = "smartsheet_base.xlsx"
+
 HISTORICO_FILE = "historico_drivin.csv"
 PAPELERA_HISTORICO_FILE = "papelera_historico.csv"
 REPORTES_FILE = "reportes_fo_problemas.csv"
@@ -545,96 +550,6 @@ def minutos_a_formato_horas(total_minutos):
   return f"+{hrs}h {mins:02d}m"
 
 
-# Carga inicial de datos
-(
-    cache_totales,
-    cache_df_cruce,
-    cache_df_ranking,
-    ultima_fecha_act,
-) = cargar_cache_global()
-
-if "df_cruce" not in st.session_state or st.session_state.df_cruce.empty:
-  st.session_state.totales = cache_totales
-  st.session_state.df_cruce = cache_df_cruce
-  st.session_state.df_ranking = cache_df_ranking
-  st.session_state.ultima_fecha_act = ultima_fecha_act
-
-
-# --- VENTANA MODAL FLOTANTE (CONFIRMACIÓN DE GUARDADO) ---
-@st.dialog("💾 Guardar Información en Histórico")
-def modal_guardar_historico():
-  st.write("¿Deseas guardar los datos cargados en el histórico?")
-  col_m_si, col_m_no = st.columns(2)
-
-  if "mostrar_confirmar_fecha" not in st.session_state:
-    st.session_state.mostrar_confirmar_fecha = False
-
-  with col_m_si:
-    if st.button("✅ Sí, Deseo Guardar", use_container_width=True, type="primary"):
-      st.session_state.mostrar_confirmar_fecha = True
-
-  with col_m_no:
-    if st.button("❌ No", use_container_width=True):
-      st.session_state.mostrar_modal_guardar = False
-      st.session_state.mostrar_confirmar_fecha = False
-      st.rerun()
-
-  if st.session_state.mostrar_confirmar_fecha:
-    st.divider()
-    fecha_modal = st.date_input(
-        "📅 Selecciona el día a registrar:", value=date.today()
-    )
-
-    totales_act = st.session_state.get("totales", {})
-    df_act = st.session_state.get("df_cruce", pd.DataFrame())
-
-    v_tot = totales_act.get("total_fo", 0)
-    v_int = totales_act.get("integradas", 0)
-    v_at = totales_act.get("a_tiempo", 0)
-    v_ret = totales_act.get("con_retraso", 0)
-    v_vig = totales_act.get("vigentes", 0)
-    v_ven = totales_act.get("vencidas", 0)
-    v_rec = totales_act.get("rechazadas", 0)
-
-    v_rep = 0
-    v_evt = 0
-    v_ret_rep = 0
-
-    if not df_act.empty:
-      v_rep = len(df_act[df_act["Estado_Reporte"] == "🚨 REPORTADA"]) if "Estado_Reporte" in df_act.columns else 0
-      v_evt = len(df_act[df_act["Evento"].notna() & (df_act["Evento"].astype(str).str.strip() != "-") & (df_act["Evento"].astype(str).str.strip() != "")]) if "Evento" in df_act.columns else 0
-      if "Estado de la ruta" in df_act.columns and "Estado_Reporte" in df_act.columns:
-        v_ret_rep = len(df_act[(df_act["Estado de la ruta"] == "Finalizada con Retraso") & (df_act["Estado_Reporte"] == "🚨 REPORTADA")])
-
-    evaluables = v_at + v_ret + v_ven
-    p_at = (v_at / evaluables * 100) if evaluables > 0 else 0.0
-    p_v = (v_ven / v_int * 100) if v_int > 0 else 0.0
-
-    reg = {
-        "Fecha_Registro": str(fecha_modal),
-        "FO_Totales": v_tot,
-        "Integradas": v_int,
-        "A_Tiempo": v_at,
-        "Con_Retraso": v_ret,
-        "Vigentes": v_vig,
-        "Vencidas": v_ven,
-        "Rechazadas": v_rec,
-        "FO_Reportadas": v_rep,
-        "FO_Con_Evento": v_evt,
-        "Retrasos_Reportados": v_ret_rep,
-        "Pct_A_Tiempo": round(p_at, 2),
-        "Pct_Vencidas": round(p_v, 2),
-    }
-
-    if st.button("💾 Guardar Día", use_container_width=True, type="primary"):
-      if guardar_nuevo_registro(reg):
-        st.session_state.mostrar_modal_guardar = False
-        st.session_state.mostrar_confirmar_fecha = False
-        st.rerun()
-      else:
-        st.warning(f"⚠️ El día {fecha_modal} ya existe en el histórico.")
-
-
 # --- EXPORTAR EXCEL ---
 def generar_excel_descarga(df_cruce, dict_metricas, df_ranking=None):
   output = io.BytesIO()
@@ -1031,6 +946,228 @@ def procesar_drivin_pdf(file_pdf_drivin):
   return totales, df_fos, pd.DataFrame()
 
 
+# --- FUNCIÓN DE CRUCE DE DATOS GENERAL ---
+def ejecutar_cruce_completo(file_drivin, file_sae=None, file_smartsheet=None):
+  if hasattr(file_drivin, "name") and file_drivin.name.endswith(".pdf"):
+    totales_p, df_fos_p, df_rank_p = procesar_drivin_pdf(file_drivin)
+  else:
+    totales_p, df_fos_p, df_rank_p = procesar_drivin_excel(file_drivin)
+
+  if totales_p["total_fo"] == 0 or totales_p["total_fo"] < len(df_fos_p):
+    totales_p["total_fo"] = len(df_fos_p) if not df_fos_p.empty else 500
+    totales_p["integradas"] = totales_p["total_fo"]
+
+  df_sae_p = (
+      procesar_excel_sae(file_sae)
+      if file_sae is not None
+      else pd.DataFrame()
+  )
+  df_sm_p = (
+      procesar_smartsheet(file_smartsheet)
+      if file_smartsheet is not None
+      else pd.DataFrame()
+  )
+
+  df_cruce_p = pd.DataFrame()
+  if not df_fos_p.empty:
+    df_cruce_p = df_fos_p.copy()
+
+    if not df_sae_p.empty:
+      df_cruce_p = pd.merge(df_cruce_p, df_sae_p, on="FO", how="left")
+    else:
+      (
+          df_cruce_p["SUCURSAL"],
+          df_cruce_p["ORIGEN"],
+          df_cruce_p["DESTINO"],
+          df_cruce_p["FOLIO"],
+      ) = (None, None, None, None)
+
+    if not df_sm_p.empty:
+      df_cruce_p = pd.merge(df_cruce_p, df_sm_p, on="FO", how="left")
+      if "ORIGEN_SM" in df_cruce_p.columns:
+        df_cruce_p["ORIGEN"] = df_cruce_p["ORIGEN"].fillna(
+            df_cruce_p["ORIGEN_SM"]
+        )
+        df_cruce_p["DESTINO"] = df_cruce_p["DESTINO"].fillna(
+            df_cruce_p["DESTINO_SM"]
+        )
+        df_cruce_p = df_cruce_p.drop(
+            columns=["ORIGEN_SM", "DESTINO_SM"]
+        )
+
+    df_cruce_p["SUCURSAL"] = df_cruce_p["SUCURSAL"].fillna(
+        "PENDIENTE EN GO TRUCK"
+    )
+    df_cruce_p["ORIGEN"] = df_cruce_p["ORIGEN"].fillna(
+        "PENDIENTE EN GO TRUCK"
+    )
+    df_cruce_p["DESTINO"] = df_cruce_p["DESTINO"].fillna(
+        "PENDIENTE EN GO TRUCK"
+    )
+    df_cruce_p["FOLIO"] = df_cruce_p["FOLIO"].apply(limpiar_fo_str)
+
+    # Integración de reportes
+    df_reps_p = cargar_reportes_fo()
+    if not df_reps_p.empty:
+      df_reps_grouped = (
+          df_reps_p.groupby("FO")
+          .agg({
+              "Tipo_Problema": "last",
+              "Coordinador_Komatsu": "last",
+              "Responsable": "last",
+              "Detalle_Observacion": "last",
+          })
+          .reset_index()
+      )
+      df_reps_grouped["Estado_Reporte"] = "🚨 REPORTADA"
+      df_reps_grouped["Detalle_Reporte"] = (
+          "Motivo: "
+          + df_reps_grouped["Tipo_Problema"].astype(str)
+          + " | Coord. Komatsu: "
+          + df_reps_grouped["Coordinador_Komatsu"].astype(str)
+          + " | Resp: "
+          + df_reps_grouped["Responsable"].astype(str)
+          + " | Obs: "
+          + df_reps_grouped["Detalle_Observacion"].astype(str)
+      )
+
+      df_cruce_p = pd.merge(
+          df_cruce_p,
+          df_reps_grouped[["FO", "Estado_Reporte", "Detalle_Reporte"]],
+          on="FO",
+          how="left",
+      )
+      df_cruce_p["Estado_Reporte"] = df_cruce_p["Estado_Reporte"].fillna(
+          "Sin Reporte"
+      )
+      df_cruce_p["Detalle_Reporte"] = df_cruce_p[
+          "Detalle_Reporte"
+      ].fillna("-")
+    else:
+      df_cruce_p["Estado_Reporte"] = "Sin Reporte"
+      df_cruce_p["Detalle_Reporte"] = "-"
+
+    cols_order = [
+        "FO",
+        "Fin plan",
+        "Fin real",
+        "Desviación",
+        "Conductor",
+        "Estado_Reporte",
+        "Detalle_Reporte",
+        "SUCURSAL",
+        "RESPONSABLE",
+        "Inicio Planificado",
+        "Fin Planificado",
+        "Estado de la ruta",
+        "Evento",
+        "ORIGEN",
+        "DESTINO",
+        "FOLIO",
+    ]
+    cols_exist = [c for c in cols_order if c in df_cruce_p.columns]
+    df_cruce_p = df_cruce_p[cols_exist]
+
+  return totales_p, df_cruce_p, df_rank_p
+
+
+# --- INICIALIZACIÓN AUTOMÁTICA DESDE ARCHIVOS BASE EN GITHUB O CACHÉ ---
+cache_totales, cache_df_cruce, cache_df_ranking, ultima_fecha_act = cargar_cache_global()
+
+if (cache_df_cruce is None or cache_df_cruce.empty) and os.path.exists(DRIVIN_BASE_FILE):
+  f_sae_b = SAE_BASE_FILE if os.path.exists(SAE_BASE_FILE) else None
+  f_sm_b = SMARTSHEET_BASE_FILE if os.path.exists(SMARTSHEET_BASE_FILE) else None
+  try:
+    cache_totales, cache_df_cruce, cache_df_ranking = ejecutar_cruce_completo(
+        DRIVIN_BASE_FILE, f_sae_b, f_sm_b
+    )
+    guardar_cache_global(cache_totales, cache_df_cruce, cache_df_ranking)
+    ultima_fecha_act = datetime.now().strftime("%d/%m/%Y a las %H:%M hrs")
+  except Exception as e:
+    st.warning(f"No se pudieron cargar los archivos base predeterminados: {e}")
+
+if "df_cruce" not in st.session_state or st.session_state.df_cruce.empty:
+  st.session_state.totales = cache_totales
+  st.session_state.df_cruce = cache_df_cruce
+  st.session_state.df_ranking = cache_df_ranking
+  st.session_state.ultima_fecha_act = ultima_fecha_act
+
+
+# --- VENTANA MODAL FLOTANTE (CONFIRMACIÓN DE GUARDADO) ---
+@st.dialog("💾 Guardar Información en Histórico")
+def modal_guardar_historico():
+  st.write("¿Deseas guardar los datos cargados en el histórico?")
+  col_m_si, col_m_no = st.columns(2)
+
+  if "mostrar_confirmar_fecha" not in st.session_state:
+    st.session_state.mostrar_confirmar_fecha = False
+
+  with col_m_si:
+    if st.button("✅ Sí, Deseo Guardar", use_container_width=True, type="primary"):
+      st.session_state.mostrar_confirmar_fecha = True
+
+  with col_m_no:
+    if st.button("❌ No", use_container_width=True):
+      st.session_state.mostrar_modal_guardar = False
+      st.session_state.mostrar_confirmar_fecha = False
+      st.rerun()
+
+  if st.session_state.mostrar_confirmar_fecha:
+    st.divider()
+    fecha_modal = st.date_input(
+        "📅 Selecciona el día a registrar:", value=date.today()
+    )
+
+    totales_act = st.session_state.get("totales", {})
+    df_act = st.session_state.get("df_cruce", pd.DataFrame())
+
+    v_tot = totales_act.get("total_fo", 0)
+    v_int = totales_act.get("integradas", 0)
+    v_at = totales_act.get("a_tiempo", 0)
+    v_ret = totales_act.get("con_retraso", 0)
+    v_vig = totales_act.get("vigentes", 0)
+    v_ven = totales_act.get("vencidas", 0)
+    v_rec = totales_act.get("rechazadas", 0)
+
+    v_rep = 0
+    v_evt = 0
+    v_ret_rep = 0
+
+    if not df_act.empty:
+      v_rep = len(df_act[df_act["Estado_Reporte"] == "🚨 REPORTADA"]) if "Estado_Reporte" in df_act.columns else 0
+      v_evt = len(df_act[df_act["Evento"].notna() & (df_act["Evento"].astype(str).str.strip() != "-") & (df_act["Evento"].astype(str).str.strip() != "")]) if "Evento" in df_act.columns else 0
+      if "Estado de la ruta" in df_act.columns and "Estado_Reporte" in df_act.columns:
+        v_ret_rep = len(df_act[(df_act["Estado de la ruta"] == "Finalizada con Retraso") & (df_act["Estado_Reporte"] == "🚨 REPORTADA")])
+
+    evaluables = v_at + v_ret + v_ven
+    p_at = (v_at / evaluables * 100) if evaluables > 0 else 0.0
+    p_v = (v_ven / v_int * 100) if v_int > 0 else 0.0
+
+    reg = {
+        "Fecha_Registro": str(fecha_modal),
+        "FO_Totales": v_tot,
+        "Integradas": v_int,
+        "A_Tiempo": v_at,
+        "Con_Retraso": v_ret,
+        "Vigentes": v_vig,
+        "Vencidas": v_ven,
+        "Rechazadas": v_rec,
+        "FO_Reportadas": v_rep,
+        "FO_Con_Evento": v_evt,
+        "Retrasos_Reportados": v_ret_rep,
+        "Pct_A_Tiempo": round(p_at, 2),
+        "Pct_Vencidas": round(p_v, 2),
+    }
+
+    if st.button("💾 Guardar Día", use_container_width=True, type="primary"):
+      if guardar_nuevo_registro(reg):
+        st.session_state.mostrar_modal_guardar = False
+        st.session_state.mostrar_confirmar_fecha = False
+        st.rerun()
+      else:
+        st.warning(f"⚠️ El día {fecha_modal} ya existe en el histórico.")
+
+
 # --- BARRA LATERAL (ADMINISTRADOR) ---
 with st.sidebar:
   st.title(" Panel Drivin")
@@ -1125,7 +1262,7 @@ with st.sidebar:
 
   st.divider()
 
-  st.subheader("📂 1. Seleccionar Formato Drivin")
+  st.subheader("📂 Sobrescribir Planillas (Opcional)")
   formato_drivin = st.radio(
       "Tipo de Archivo Drivin a Cargar:",
       ["📊 Excel Drivin (Nuevo Formato)", "📄 PDF Drivin (Formato Legacy)"],
@@ -1157,137 +1294,22 @@ with st.sidebar:
   )
 
   if btn_procesar:
-    if "Excel" in formato_drivin and uploaded_drivin_excel is None:
-      st.error("⚠️ Debes adjuntar el archivo Excel de Drivin.")
-    elif "PDF" in formato_drivin and uploaded_drivin_pdf is None:
-      st.error("⚠️ Debes adjuntar el archivo PDF de Drivin.")
+    f_drivin_sel = uploaded_drivin_excel if "Excel" in formato_drivin else uploaded_drivin_pdf
+    if f_drivin_sel is None and not os.path.exists(DRIVIN_BASE_FILE):
+      st.error("⚠️ Debes adjuntar el archivo de Drivin.")
     else:
       try:
-        if "Excel" in formato_drivin:
-          totales_p, df_fos_p, df_rank_p = procesar_drivin_excel(
-              uploaded_drivin_excel
-          )
-        else:
-          totales_p, df_fos_p, df_rank_p = procesar_drivin_pdf(
-              uploaded_drivin_pdf
-          )
+        f_d = f_drivin_sel if f_drivin_sel is not None else DRIVIN_BASE_FILE
+        f_sae = uploaded_excel_sae if uploaded_excel_sae is not None else (SAE_BASE_FILE if os.path.exists(SAE_BASE_FILE) else None)
+        f_sm = uploaded_smartsheet if uploaded_smartsheet is not None else (SMARTSHEET_BASE_FILE if os.path.exists(SMARTSHEET_BASE_FILE) else None)
 
-        if totales_p["total_fo"] == 0 or totales_p["total_fo"] < len(df_fos_p):
+        totales_p, df_cruce_p, df_rank_p = ejecutar_cruce_completo(f_d, f_sae, f_sm)
+
+        if totales_p["total_fo"] == 0 or totales_p["total_fo"] < len(df_cruce_p):
           totales_p["total_fo"] = (
-              len(df_fos_p) if not df_fos_p.empty else servicios_mensuales_admin
+              len(df_cruce_p) if not df_cruce_p.empty else servicios_mensuales_admin
           )
           totales_p["integradas"] = totales_p["total_fo"]
-
-        df_sae_p = (
-            procesar_excel_sae(uploaded_excel_sae)
-            if uploaded_excel_sae is not None
-            else pd.DataFrame()
-        )
-        df_sm_p = (
-            procesar_smartsheet(uploaded_smartsheet)
-            if uploaded_smartsheet is not None
-            else pd.DataFrame()
-        )
-
-        df_cruce_p = pd.DataFrame()
-        if not df_fos_p.empty:
-          df_cruce_p = df_fos_p.copy()
-
-          if not df_sae_p.empty:
-            df_cruce_p = pd.merge(df_cruce_p, df_sae_p, on="FO", how="left")
-          else:
-            (
-                df_cruce_p["SUCURSAL"],
-                df_cruce_p["ORIGEN"],
-                df_cruce_p["DESTINO"],
-                df_cruce_p["FOLIO"],
-            ) = (None, None, None, None)
-
-          if not df_sm_p.empty:
-            df_cruce_p = pd.merge(df_cruce_p, df_sm_p, on="FO", how="left")
-            if "ORIGEN_SM" in df_cruce_p.columns:
-              df_cruce_p["ORIGEN"] = df_cruce_p["ORIGEN"].fillna(
-                  df_cruce_p["ORIGEN_SM"]
-              )
-              df_cruce_p["DESTINO"] = df_cruce_p["DESTINO"].fillna(
-                  df_cruce_p["DESTINO_SM"]
-              )
-              df_cruce_p = df_cruce_p.drop(
-                  columns=["ORIGEN_SM", "DESTINO_SM"]
-              )
-
-          df_cruce_p["SUCURSAL"] = df_cruce_p["SUCURSAL"].fillna(
-              "PENDIENTE EN GO TRUCK"
-          )
-          df_cruce_p["ORIGEN"] = df_cruce_p["ORIGEN"].fillna(
-              "PENDIENTE EN GO TRUCK"
-          )
-          df_cruce_p["DESTINO"] = df_cruce_p["DESTINO"].fillna(
-              "PENDIENTE EN GO TRUCK"
-          )
-          df_cruce_p["FOLIO"] = df_cruce_p["FOLIO"].apply(limpiar_fo_str)
-
-          # --- INTEGRACIÓN AUTOMÁTICA DE REPORTES DESDE LA CARGA ---
-          df_reps_p = cargar_reportes_fo()
-          if not df_reps_p.empty:
-            df_reps_grouped = (
-                df_reps_p.groupby("FO")
-                .agg({
-                    "Tipo_Problema": "last",
-                    "Coordinador_Komatsu": "last",
-                    "Responsable": "last",
-                    "Detalle_Observacion": "last",
-                })
-                .reset_index()
-            )
-            df_reps_grouped["Estado_Reporte"] = "🚨 REPORTADA"
-            df_reps_grouped["Detalle_Reporte"] = (
-                "Motivo: "
-                + df_reps_grouped["Tipo_Problema"].astype(str)
-                + " | Coord. Komatsu: "
-                + df_reps_grouped["Coordinador_Komatsu"].astype(str)
-                + " | Resp: "
-                + df_reps_grouped["Responsable"].astype(str)
-                + " | Obs: "
-                + df_reps_grouped["Detalle_Observacion"].astype(str)
-            )
-
-            df_cruce_p = pd.merge(
-                df_cruce_p,
-                df_reps_grouped[["FO", "Estado_Reporte", "Detalle_Reporte"]],
-                on="FO",
-                how="left",
-            )
-            df_cruce_p["Estado_Reporte"] = df_cruce_p["Estado_Reporte"].fillna(
-                "Sin Reporte"
-            )
-            df_cruce_p["Detalle_Reporte"] = df_cruce_p[
-                "Detalle_Reporte"
-            ].fillna("-")
-          else:
-            df_cruce_p["Estado_Reporte"] = "Sin Reporte"
-            df_cruce_p["Detalle_Reporte"] = "-"
-
-          cols_order = [
-              "FO",
-              "Fin plan",
-              "Fin real",
-              "Desviación",
-              "Conductor",
-              "Estado_Reporte",
-              "Detalle_Reporte",
-              "SUCURSAL",
-              "RESPONSABLE",
-              "Inicio Planificado",
-              "Fin Planificado",
-              "Estado de la ruta",
-              "Evento",
-              "ORIGEN",
-              "DESTINO",
-              "FOLIO",
-          ]
-          cols_exist = [c for c in cols_order if c in df_cruce_p.columns]
-          df_cruce_p = df_cruce_p[cols_exist]
 
         guardar_cache_global(totales_p, df_cruce_p, df_rank_p)
 
