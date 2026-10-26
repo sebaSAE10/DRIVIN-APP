@@ -1404,7 +1404,7 @@ if st.session_state.get("mostrar_modal_guardar", False):
 
 
 # --- DASHBOARD ---
-st.title("🚚 Dashboard Operativo Drivin")
+st.title("🚚 Drivin SAE")
 
 fecha_encabezado = st.session_state.get("ultima_fecha_act", ultima_fecha_act)
 if fecha_encabezado:
@@ -1585,8 +1585,8 @@ if val_int > 0:
     tab_historico,
 ) = st.tabs([
     "📋 Vencidas y Vigentes",
-    "📅 Rendimiento Acumulado Rango de Fechas",
-    "📊 Metas y Gráficos (95% / 90%)",
+    "📅 Simulación MES actual",
+    "📊 Rendimiento KPIS Komatsu",
     "🏆 Ranking Conductores",
     "🏢 Rendimiento por Sucursales",
     "⏱️ Finalizadas con Retraso",
