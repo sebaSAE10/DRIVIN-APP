@@ -1637,43 +1637,58 @@ if st.session_state.modulo_activo == "INICIO":
       st.session_state.modulo_activo = "HISTORICO"
       st.rerun()
 
-# --- VISTA 2: NAVEGACIÓN HÍBRIDA (BOTÓN DE REGRESO + BARRA DE PESTAÑAS PANTALLA COMPLETA) ---
+# --- VISTA 2: DESPLIEGUE A PANTALLA COMPLETA DEL MÓDULO CON BARRA SUPERIOR DE ACCESO RÁPIDO ---
 else:
-  col_btn_reg, col_space = st.columns([1, 4])
-  with col_btn_reg:
-    if st.button("⬅️ Volver al Menú Principal (Módulos)", type="primary", use_container_width=True):
+  # BARRA SUPERIOR CON BOTÓN DE REGRESO Y BOTONES DE NAVEGACIÓN RÁPIDA
+  col_btn_back, col_nav_bar = st.columns([1, 4])
+  with col_btn_back:
+    if st.button("⬅️ Volver al Menú Principal", type="primary", use_container_width=True):
       st.session_state.modulo_activo = "INICIO"
       st.rerun()
 
-  st.markdown("<br>", unsafe_allow_html=True)
+  with col_nav_bar:
+    n_col1, n_col2, n_col3, n_col4, n_col5, n_col6, n_col7, n_col8, n_col9 = st.columns(9)
+    with n_col1:
+      if st.button("📋 V&V", use_container_width=True, help="Vencidas y Vigentes"):
+        st.session_state.modulo_activo = "VENCIDAS_VIGENTES"
+        st.rerun()
+    with n_col2:
+      if st.button("📅 Fechas", use_container_width=True, help="Rendimiento Rango Fechas"):
+        st.session_state.modulo_activo = "RANGO_FECHAS"
+        st.rerun()
+    with n_col3:
+      if st.button("📊 Metas", use_container_width=True, help="Metas y Gráficos (95%/90%)"):
+        st.session_state.modulo_activo = "METAS"
+        st.rerun()
+    with n_col4:
+      if st.button("🏆 Ranking", use_container_width=True, help="Ranking Conductores"):
+        st.session_state.modulo_activo = "RANKING"
+        st.rerun()
+    with n_col5:
+      if st.button("🏢 Sucursales", use_container_width=True, help="Rendimiento por Sucursales"):
+        st.session_state.modulo_activo = "SUCURSALES"
+        st.rerun()
+    with n_col6:
+      if st.button("⏱️ Retraso", use_container_width=True, help="Finalizadas con Retraso"):
+        st.session_state.modulo_activo = "RETRASO"
+        st.rerun()
+    with n_col7:
+      if st.button("📝 Reportar", use_container_width=True, help="Reportar FO"):
+        st.session_state.modulo_activo = "REPORTAR"
+        st.rerun()
+    with n_col8:
+      if st.button("📊 Mandante", use_container_width=True, help="Reportes Mandante"):
+        st.session_state.modulo_activo = "MANDANTE"
+        st.rerun()
+    with n_col9:
+      if st.button("📈 Histórico", use_container_width=True, help="Evolución Histórica"):
+        st.session_state.modulo_activo = "HISTORICO"
+        st.rerun()
 
-  # DEFINICIÓN DE PESTAÑAS PERMANENTES
-  tabs_nombres = [
-      "📋 Vencidas y Vigentes",
-      "📅 Rendimiento Acumulado Rango de Fechas",
-      "📊 Metas y Gráficos (95% / 90%)",
-      "🏆 Ranking Conductores",
-      "🏢 Rendimiento por Sucursales",
-      "⏱️ Finalizadas con Retraso",
-      "📝 Reportar FO",
-      "📊 Reportes de FO para el Mandante",
-      "📈 Evolución Histórica",
-  ]
+  st.divider()
 
-  (
-      tab_vencidas_vigentes,
-      tab_rango_fechas,
-      tab_metas_graficos,
-      tab_ranking,
-      tab_sucursales,
-      tab_retraso,
-      tab_reportar,
-      tab_mandante,
-      tab_historico,
-  ) = st.tabs(tabs_nombres)
-
-  # PESTAÑA 1: VENCIDAS Y VIGENTES
-  with tab_vencidas_vigentes:
+  # MÓDULO 1: VENCIDAS Y VIGENTES
+  if st.session_state.modulo_activo == "VENCIDAS_VIGENTES":
     if not df_cruce.empty:
       st.subheader("📋 Tabla Unificada de Vencidas y Vigentes")
       col_f1, col_f2 = st.columns(2)
@@ -1719,8 +1734,8 @@ else:
     else:
       st.info("👈 Carga y procesa archivos desde el menú lateral para ver la tabla.")
 
-  # PESTAÑA 2: RANGO DE FECHAS
-  with tab_rango_fechas:
+  # MÓDULO 2: RANGO DE FECHAS
+  elif st.session_state.modulo_activo == "RANGO_FECHAS":
     st.subheader("📅 Filtrado de FO por Rango de Fechas (Basado en Servicios Mensuales)")
     if not df_cruce.empty:
       df_rf = df_cruce.copy()
@@ -1799,8 +1814,8 @@ else:
       else:
         st.warning("No se pudieron interpretar fechas válidas.")
 
-  # PESTAÑA 3: METAS Y GRÁFICOS
-  with tab_metas_graficos:
+  # MÓDULO 3: METAS Y GRÁFICOS
+  elif st.session_state.modulo_activo == "METAS":
     st.subheader("📊 Evaluación de Cumplimiento de Metas Operativas (95% y 90%)")
     if not df_cruce.empty:
       cf1, cf2 = st.columns(2)
@@ -1834,31 +1849,31 @@ else:
           fig_g90 = go.Figure(go.Indicator(mode="gauge+number+delta", value=pct_a_tiempo_tot, title={"text": "% A Tiempo (Meta 90%)"}, delta={"reference": 90.0}))
           st.plotly_chart(fig_g90, use_container_width=True)
 
-  # PESTAÑA 4: RANKING CONDUCTORES
-  with tab_ranking:
+  # MÓDULO 4: RANKING CONDUCTORES
+  elif st.session_state.modulo_activo == "RANKING":
     st.subheader("🏆 Ranking de Cumplimiento de Conductores")
     if df_ranking is not None and not df_ranking.empty:
       st.dataframe(df_ranking, use_container_width=True, height=500)
     else:
       st.info("Sin datos de ranking actualmente.")
 
-  # PESTAÑA 5: SUCURSALES
-  with tab_sucursales:
+  # MÓDULO 5: SUCURSALES
+  elif st.session_state.modulo_activo == "SUCURSALES":
     st.subheader("🏢 Rendimiento por Sucursales")
     if not df_cruce.empty:
       fig_suc = px.bar(df_cruce, x="SUCURSAL", color="Estado de la ruta", barmode="group", text_auto=True)
       st.plotly_chart(fig_suc, use_container_width=True)
 
-  # PESTAÑA 6: RETRASO
-  with tab_retraso:
+  # MÓDULO 6: RETRASO
+  elif st.session_state.modulo_activo == "RETRASO":
     st.subheader("⏱️ FO Finalizadas con Retraso")
     if not df_cruce.empty:
       df_solo_retraso = df_cruce[df_cruce["Estado de la ruta"] == "Finalizada con Retraso"].copy()
       if not df_solo_retraso.empty:
         st.dataframe(df_solo_retraso.style.map(color_filas_estado, subset=["Estado_Reporte"]), use_container_width=True, height=500)
 
-  # PESTAÑA 7: REPORTAR FO (FORMULARIO INDEPENDIENTE)
-  with tab_reportar:
+  # MÓDULO 7: REPORTAR FO
+  elif st.session_state.modulo_activo == "REPORTAR":
     st.subheader("📝 Formulario de Registro y Edición de Reportes FO")
     df_reps_actuales = cargar_reportes_fo()
     opciones_modo = ["➕ Nuevo Reporte"]
@@ -1929,8 +1944,8 @@ else:
             st.success("🗑️ Reporte eliminado.")
             st.rerun()
 
-  # PESTAÑA 8: REPORTES PARA EL MANDANTE (VISTA EJECUTIVA Y GRÁFICOS)
-  with tab_mandante:
+  # MÓDULO 8: REPORTES MANDANTE
+  elif st.session_state.modulo_activo == "MANDANTE":
     st.subheader("📊 Informe Ejecutivo de Inconsistencias para el Mandante")
     df_reps = cargar_reportes_fo()
     if not df_reps.empty:
@@ -2002,8 +2017,8 @@ else:
     else:
       st.info("Aún no hay reportes de FO registrados para mostrar al mandante.")
 
-  # PESTAÑA 9: HISTÓRICO Y PAPELERA
-  with tab_historico:
+  # MÓDULO 9: HISTÓRICO
+  elif st.session_state.modulo_activo == "HISTORICO":
     st.subheader("📈 Evolución Histórica de Cumplimiento")
     df_hist = cargar_historico()
     df_papelera = cargar_papelera()
