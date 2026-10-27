@@ -1857,12 +1857,52 @@ else:
     else:
       st.info("Sin datos de ranking actualmente.")
 
-  # MÓDULO 5: SUCURSALES
+  # MÓDULO 5: SUCURSALES (ACTUALIZADO: DESGLOSE DE FINALIZADAS CON RETRASO POR REPORTADAS)
   elif st.session_state.modulo_activo == "SUCURSALES":
-    st.subheader("🏢 Rendimiento por Sucursales")
+    st.subheader("🏢 Rendimiento por Sucursales (Desglose de Retrasos y Reportes)")
     if not df_cruce.empty:
-      fig_suc = px.bar(df_cruce, x="SUCURSAL", color="Estado de la ruta", barmode="group", text_auto=True)
+      df_suc_graf = df_cruce.copy()
+
+      def clasificar_estado_sucursal(row):
+        est = str(row.get("Estado de la ruta", "")).strip()
+        rep = str(row.get("Estado_Reporte", "")).strip()
+        if est == "Finalizada con Retraso":
+          if rep == "🚨 REPORTADA":
+            return "Finalizada con Retraso (REPORTADA)"
+          else:
+            return "Finalizada con Retraso (Sin Reporte)"
+        return est
+
+      df_suc_graf["Estado_Grafico_Sucursal"] = df_suc_graf.apply(clasificar_estado_sucursal, axis=1)
+
+      df_suc_counts = (
+          df_suc_graf.groupby(["SUCURSAL", "Estado_Grafico_Sucursal"])
+          .size()
+          .reset_index(name="Cantidad")
+      )
+
+      color_map_suc = {
+          "Vigente": "#3498db",
+          "Vencida": "#e74c3c",
+          "Finalizada con Retraso (Sin Reporte)": "#f39c12",
+          "Finalizada con Retraso (REPORTADA)": "#9b59b6",
+          "Rechazada": "#8e44ad",
+          "A Tiempo": "#2ecc71",
+      }
+
+      fig_suc = px.bar(
+          df_suc_counts,
+          x="SUCURSAL",
+          y="Cantidad",
+          color="Estado_Grafico_Sucursal",
+          color_discrete_map=color_map_suc,
+          barmode="stack",
+          text_auto=True,
+          title="Distribución por Sucursal (Con Desglose de Retrasos Reportados vs Sin Reporte)",
+      )
       st.plotly_chart(fig_suc, use_container_width=True)
+    else:
+      st.info("Sin información para generar el gráfico por sucursales.")
 
   # MÓDULO 6: RETRASO
   elif st.session_state.modulo_activo == "RETRASO":
