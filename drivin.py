@@ -1609,7 +1609,7 @@ if st.session_state.modulo_activo == "INICIO":
 
   with b_col2:
     st.markdown('<div class="nav-header">📊 Rendimiento & Metas</div>', unsafe_allow_html=True)
-    if st.button("📅 Rendimiento Rango Fechas", use_container_width=True):
+    if st.button("📅 Simulación KPIS", use_container_width=True):
       st.session_state.modulo_activo = "RANGO_FECHAS"
       st.rerun()
     if st.button("📊 Metas y Gráficos (95%/90%)", use_container_width=True):
@@ -1624,7 +1624,7 @@ if st.session_state.modulo_activo == "INICIO":
     if st.button("📝 Reportar / Editar FO", use_container_width=True):
       st.session_state.modulo_activo = "REPORTAR"
       st.rerun()
-    if st.button("📊 Reportes para el Mandante", use_container_width=True):
+    if st.button("📊 FO reportadas", use_container_width=True):
       st.session_state.modulo_activo = "MANDANTE"
       st.rerun()
 
