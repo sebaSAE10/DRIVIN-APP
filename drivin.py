@@ -163,7 +163,7 @@ def guardar_opciones_coordinadores(lista_opciones):
 def limpiar_fo_str(val):
     if pd.isna(val) or str(val).strip() in ["", "-", "nan", "None"]:
         return ""
-    txt = str(val).strip()
+    txt = str(val).strip().replace(" ", "")
     if txt.endswith(".0"):
         txt = txt[:-2]
     try:
@@ -436,7 +436,7 @@ def cargar_reportes_fo():
     )
 
 
-# --- REAPLICAR CRUCE DE REPORTES (NORMALIZACIÓN COMPLETA DE CLAVES) ---
+# --- REAPLICAR REPORTES A LA TABLA DE MEMORIA ---
 def reaplicar_cruce_con_reportes():
     if "df_cruce" in st.session_state and not st.session_state.df_cruce.empty:
         df_cruce_p = st.session_state.df_cruce.copy()
@@ -446,12 +446,12 @@ def reaplicar_cruce_con_reportes():
             if col_del in df_cruce_p.columns:
                 df_cruce_p = df_cruce_p.drop(columns=[col_del])
 
-        # Clave limpia normalizada
-        df_cruce_p["FO_KEY"] = df_cruce_p["FO"].apply(limpiar_fo_str)
+        # Clave unificada sanitizada de forma estricta
+        df_cruce_p["FO_KEY"] = df_cruce_p["FO"].astype(str).apply(limpiar_fo_str)
 
         df_reps_p = cargar_reportes_fo()
         if not df_reps_p.empty:
-            df_reps_p["FO_KEY"] = df_reps_p["FO"].apply(limpiar_fo_str)
+            df_reps_p["FO_KEY"] = df_reps_p["FO"].astype(str).apply(limpiar_fo_str)
 
             df_reps_grouped = (
                 df_reps_p.groupby("FO_KEY")
@@ -467,7 +467,7 @@ def reaplicar_cruce_con_reportes():
             df_reps_grouped["Detalle_Reporte"] = (
                 "Motivo: "
                 + df_reps_grouped["Tipo_Problema"].astype(str)
-                + " | Coord. Komatsu: "
+                + " | Coord: "
                 + df_reps_grouped["Coordinador_Komatsu"].astype(str)
                 + " | Resp: "
                 + df_reps_grouped["Responsable"].astype(str)
@@ -475,6 +475,7 @@ def reaplicar_cruce_con_reportes():
                 + df_reps_grouped["Detalle_Observacion"].astype(str)
             )
 
+            # Left join asegurado por clave sanitizada
             df_cruce_p = pd.merge(
                 df_cruce_p,
                 df_reps_grouped[["FO_KEY", "Estado_Reporte", "Detalle_Reporte"]],
@@ -492,11 +493,11 @@ def reaplicar_cruce_con_reportes():
 
         cols_order = [
             "FO",
+            "Estado_Reporte",
             "Fin plan",
             "Fin real",
             "Desviación",
             "Conductor",
-            "Estado_Reporte",
             "Detalle_Reporte",
             "SUCURSAL",
             "RESPONSABLE",
@@ -1105,8 +1106,8 @@ def ejecutar_cruce_completo(file_drivin, file_sae=None, file_smartsheet=None):
         # Integración de reportes normalizada por FO_KEY
         df_reps_p = cargar_reportes_fo()
         if not df_reps_p.empty:
-            df_cruce_p["FO_KEY"] = df_cruce_p["FO"].apply(limpiar_fo_str)
-            df_reps_p["FO_KEY"] = df_reps_p["FO"].apply(limpiar_fo_str)
+            df_cruce_p["FO_KEY"] = df_cruce_p["FO"].astype(str).apply(limpiar_fo_str)
+            df_reps_p["FO_KEY"] = df_reps_p["FO"].astype(str).apply(limpiar_fo_str)
 
             df_reps_grouped = (
                 df_reps_p.groupby("FO_KEY")
@@ -1151,11 +1152,11 @@ def ejecutar_cruce_completo(file_drivin, file_sae=None, file_smartsheet=None):
 
         cols_order = [
             "FO",
+            "Estado_Reporte",
             "Fin plan",
             "Fin real",
             "Desviación",
             "Conductor",
-            "Estado_Reporte",
             "Detalle_Reporte",
             "SUCURSAL",
             "RESPONSABLE",
@@ -1989,7 +1990,7 @@ else:
             if not df_solo_retraso.empty:
                 st.dataframe(df_solo_retraso.style.map(color_filas_estado, subset=["Estado_Reporte"]), use_container_width=True, height=500)
 
-    # MÓDULO 7: REPORTAR FO
+    # MÓDULO 7: FORMULARIO DE REPORTES
     elif st.session_state.modulo_activo == "REPORTAR":
         st.subheader("📝 Formulario de Registro y Edición de Reportes FO")
         df_reps_actuales = cargar_reportes_fo()
@@ -2061,7 +2062,7 @@ else:
                         st.success("🗑️ Reporte eliminado.")
                         st.rerun()
 
-    # MÓDULO 8: REPORTES MANDANTE
+    # MÓDULO 8: MANDANTE
     elif st.session_state.modulo_activo == "MANDANTE":
         st.subheader("📊 Informe Ejecutivo de Inconsistencias para el Mandante")
         df_reps = cargar_reportes_fo()
