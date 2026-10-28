@@ -3,6 +3,7 @@ import json
 import os
 import pickle
 import re
+import shutil
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -80,86 +81,27 @@ REPORTES_FILE = "reportes_fo_problemas.csv"
 PROBLEMAS_CONFIG_FILE = "opciones_problemas.json"
 COORDINADORES_CONFIG_FILE = "opciones_coordinadores.json"
 CAPTURAS_DIR = "capturas_reportes"
+RESPALDOS_MES_DIR = "respaldos_mensuales"
+HISTORICO_CIERRES_FILE = "historico_cierres_mensuales.csv"
 
 CRUCE_CACHE_FILE = "ultimo_cruce.parquet"
 TOTALES_CACHE_FILE = "totales_cache.pkl"
 RANKING_CACHE_FILE = "ranking_cache.parquet"
 INFO_ACTUALIZACION_FILE = "ultima_actualizacion.txt"
 
-if not os.path.exists(CAPTURAS_DIR):
-    os.makedirs(CAPTURAS_DIR)
+# Crear carpetas del sistema
+for directorio in [CAPTURAS_DIR, RESPALDOS_MES_DIR]:
+    if not os.path.exists(directorio):
+        os.makedirs(directorio)
 
 # INICIALIZACIÓN DE NAVEGACIÓN EN SESSION STATE
 if "modulo_activo" not in st.session_state:
     st.session_state.modulo_activo = "INICIO"
 
-
-# --- MANEJO DE OPCIONES DINÁMICAS DE PROBLEMAS ---
-OPCIONES_PROBLEMAS_DEFECTO = [
-    "FO informada tarde",
-    "FO con fecha errónea",
-    "FO enviada tarde",
-    "FO sin plan",
-    "Otros",
-]
-
-def cargar_opciones_problemas():
-    if os.path.exists(PROBLEMAS_CONFIG_FILE):
-        try:
-            with open(PROBLEMAS_CONFIG_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list) and len(data) > 0:
-                    return data
-        except Exception:
-            pass
-    return list(OPCIONES_PROBLEMAS_DEFECTO)
-
-def guardar_opciones_problemas(lista_opciones):
-    try:
-        with open(PROBLEMAS_CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(lista_opciones, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        st.error(f"Error al guardar opciones de problemas: {e}")
+CLAVE_AUTORIZADA_CIERRE = "autorizado2026"  # Clave de seguridad para cerrar mes
 
 
-# --- MANEJO DE OPCIONES DINÁMICAS DE COORDINADORES KOMATSU / KCC ---
-OPCIONES_COORDINADORES_DEFECTO = [
-    "Alison Paulina Palma Acuña",
-    "Andrea Jacqueline Astorga Gil",
-    "Antonio Enrique Rojas Colina",
-    "Braulio Oscar Cabezas Araya",
-    "Camila Stephanie Arancibia Gamboa",
-    "Carolina Andrea Leiva Ramirez",
-    "Danna Corey-All Hun Tello",
-    "Elizabeth Del Carmen Ortiz Roa",
-    "Franco Aharon Taucano Aballay",
-    "Jennifer Magdalena Díaz Olmedo",
-    "Karina Alejandra Valencia Muñoz",
-    "Nicol Andrea Martinez Marambio",
-    "Patricia Andrea Cuevas Arenas",
-    "Yheri Eber Araya González",
-]
-
-def cargar_opciones_coordinadores():
-    if os.path.exists(COORDINADORES_CONFIG_FILE):
-        try:
-            with open(COORDINADORES_CONFIG_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list) and len(data) > 0:
-                    return data
-        except Exception:
-            pass
-    return list(OPCIONES_COORDINADORES_DEFECTO)
-
-def guardar_opciones_coordinadores(lista_opciones):
-    try:
-        with open(COORDINADORES_CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(lista_opciones, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        st.error(f"Error al guardar opciones de coordinadores: {e}")
-
-
-# --- FUNCIONES LOCALES DE LIMPIEZA Y CÁLCULO ---
+# --- FUNCIONES DE SANITIZACIÓN Y NORMALIZACIÓN DE CLAVES FO ---
 def limpiar_fo_str(val):
     if pd.isna(val) or str(val).strip() in ["", "-", "nan", "None"]:
         return ""
@@ -269,7 +211,73 @@ def calcular_desviacion_automatica(fin_plan_str, fin_real_str):
     return f"+{hrs}h {mins:02d}m"
 
 
-# --- MANEJO DE CACHÉ Y ARCHIVOS LOCALES ---
+# --- OPCIONES DINÁMICAS ---
+OPCIONES_PROBLEMAS_DEFECTO = [
+    "FO informada tarde",
+    "FO con fecha errónea",
+    "FO enviada tarde",
+    "FO sin plan",
+    "Otros",
+]
+
+def cargar_opciones_problemas():
+    if os.path.exists(PROBLEMAS_CONFIG_FILE):
+        try:
+            with open(PROBLEMAS_CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list) and len(data) > 0:
+                    return data
+        except Exception:
+            pass
+    return list(OPCIONES_PROBLEMAS_DEFECTO)
+
+
+def guardar_opciones_problemas(lista_opciones):
+    try:
+        with open(PROBLEMAS_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(lista_opciones, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        st.error(f"Error al guardar opciones de problemas: {e}")
+
+
+OPCIONES_COORDINADORES_DEFECTO = [
+    "Alison Paulina Palma Acuña",
+    "Andrea Jacqueline Astorga Gil",
+    "Antonio Enrique Rojas Colina",
+    "Braulio Oscar Cabezas Araya",
+    "Camila Stephanie Arancibia Gamboa",
+    "Carolina Andrea Leiva Ramirez",
+    "Danna Corey-All Hun Tello",
+    "Elizabeth Del Carmen Ortiz Roa",
+    "Franco Aharon Taucano Aballay",
+    "Jennifer Magdalena Díaz Olmedo",
+    "Karina Alejandra Valencia Muñoz",
+    "Nicol Andrea Martinez Marambio",
+    "Patricia Andrea Cuevas Arenas",
+    "Yheri Eber Araya González",
+]
+
+def cargar_opciones_coordinadores():
+    if os.path.exists(COORDINADORES_CONFIG_FILE):
+        try:
+            with open(COORDINADORES_CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list) and len(data) > 0:
+                    return data
+        except Exception:
+            pass
+    return list(OPCIONES_COORDINADORES_DEFECTO)
+
+
+def guardar_opciones_coordinadores(lista_opciones):
+    try:
+        with open(COORDINADORES_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(lista_opciones, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        st.error(f"Error al guardar opciones de coordinadores: {e}")
+
+
+# --- CACHÉ Y PERSISTENCIA ---
 def guardar_cache_global(totales, df_cruce, df_ranking):
     try:
         if not df_cruce.empty:
@@ -436,17 +444,94 @@ def cargar_reportes_fo():
     )
 
 
+# --- LÓGICA DE CIERRE DE MES Y RESPALDO ---
+def ejecutar_cierre_de_mes(nombre_mes, usuario_resp):
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    carpeta_destino = os.path.join(RESPALDOS_MES_DIR, f"Cierre_{nombre_mes}_{stamp}")
+    os.makedirs(carpeta_destino, exist_ok=True)
+
+    # 1. Guardar copia de los archivos activos en la carpeta de respaldo
+    df_cruce_actual = st.session_state.get("df_cruce", pd.DataFrame())
+    df_reps_actual = cargar_reportes_fo()
+    df_hist_actual = cargar_historico()
+
+    if not df_cruce_actual.empty:
+        df_cruce_actual.to_excel(os.path.join(carpeta_destino, "Cruce_Vencidas_Vigentes.xlsx"), index=False)
+    if not df_reps_actual.empty:
+        df_reps_actual.to_excel(os.path.join(carpeta_destino, "Reportes_FO_Problemas.xlsx"), index=False)
+    if not df_hist_actual.empty:
+        df_hist_actual.to_excel(os.path.join(carpeta_destino, "Historico_Diario.xlsx"), index=False)
+
+    # Copiar carpeta de capturas de pantallas
+    if os.path.exists(CAPTURAS_DIR) and len(os.listdir(CAPTURAS_DIR)) > 0:
+        dest_capturas = os.path.join(carpeta_destino, "capturas_reportes")
+        shutil.copytree(CAPTURAS_DIR, dest_capturas, dirs_exist_ok=True)
+
+    # 2. Registrar el cierre en el archivo maestro de cierres
+    reg_cierre = {
+        "Fecha_Cierre": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Nombre_Periodo": nombre_mes,
+        "Usuario_Responsable": usuario_resp,
+        "Ruta_Carpeta_Respaldo": carpeta_destino,
+        "Total_FO_Procesadas": len(df_cruce_actual),
+        "Total_Reportes": len(df_reps_actual),
+    }
+
+    df_cierres = pd.DataFrame()
+    if os.path.exists(HISTORICO_CIERRES_FILE):
+        df_cierres = pd.read_csv(HISTORICO_CIERRES_FILE)
+    df_cierres = pd.concat([df_cierres, pd.DataFrame([reg_cierre])], ignore_index=True)
+    df_cierres.to_csv(HISTORICO_CIERRES_FILE, index=False)
+
+    # 3. RESET DEL SISTEMA (EMPEZAR DE 0)
+    st.session_state.df_cruce = pd.DataFrame()
+    st.session_state.df_ranking = pd.DataFrame()
+    st.session_state.totales = {
+        "total_fo": 0,
+        "integradas": 0,
+        "a_tiempo": 0,
+        "con_retraso": 0,
+        "vigentes": 0,
+        "vencidas": 0,
+        "rechazadas": 0,
+    }
+
+    # Vaciar archivo de reportes CSV
+    pd.DataFrame(
+        columns=[
+            "Fecha_Reporte",
+            "FO",
+            "Sucursal",
+            "Tipo_Problema",
+            "Coordinador_Komatsu",
+            "Responsable",
+            "Detalle_Observacion",
+            "Tipo_Respaldo",
+            "Archivo_Pantallazo",
+        ]
+    ).to_csv(REPORTES_FILE, index=False)
+
+    # Eliminar archivos de caché local
+    for arch_cache in [CRUCE_CACHE_FILE, TOTALES_CACHE_FILE, RANKING_CACHE_FILE]:
+        if os.path.exists(arch_cache):
+            try:
+                os.remove(arch_cache)
+            except Exception:
+                pass
+
+    st.session_state.ultima_fecha_act = f"Mes {nombre_mes} cerrado el {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+    return True
+
+
 # --- REAPLICAR REPORTES A LA TABLA DE MEMORIA ---
 def reaplicar_cruce_con_reportes():
     if "df_cruce" in st.session_state and not st.session_state.df_cruce.empty:
         df_cruce_p = st.session_state.df_cruce.copy()
         
-        # Eliminar columnas antiguas
         for col_del in ["Estado_Reporte", "Detalle_Reporte", "FO_KEY"]:
             if col_del in df_cruce_p.columns:
                 df_cruce_p = df_cruce_p.drop(columns=[col_del])
 
-        # Clave unificada sanitizada de forma estricta
         df_cruce_p["FO_KEY"] = df_cruce_p["FO"].astype(str).apply(limpiar_fo_str)
 
         df_reps_p = cargar_reportes_fo()
@@ -475,7 +560,6 @@ def reaplicar_cruce_con_reportes():
                 + df_reps_grouped["Detalle_Observacion"].astype(str)
             )
 
-            # Left join asegurado por clave sanitizada
             df_cruce_p = pd.merge(
                 df_cruce_p,
                 df_reps_grouped[["FO_KEY", "Estado_Reporte", "Detalle_Reporte"]],
@@ -613,41 +697,7 @@ def eliminar_reporte_fo(fo_target):
     return False
 
 
-# --- FUNCIÓN AUXILIAR DE TIEMPO / DESVIACIÓN ---
-def desviacion_a_minutos(val_str):
-    if pd.isna(val_str) or str(val_str).strip() in ["-", "", "nan", "None"]:
-        return None
-    texto = str(val_str).strip().lower().replace("+", "")
-    horas = 0
-    minutos = 0
-
-    m_h = re.search(r"(\d+)\s*h", texto)
-    if m_h:
-        horas = int(m_h.group(1))
-
-    m_m = re.search(r"(\d+)\s*m", texto)
-    if m_m:
-        minutos = int(m_m.group(1))
-
-    if not m_h and not m_m:
-        m_num = re.search(r"(\d+)", texto)
-        if m_num:
-            horas = int(m_num.group(1))
-
-    total = horas * 60 + minutos
-    return total if total > 0 else None
-
-
-def minutos_a_formato_horas(total_minutos):
-    if pd.isna(total_minutos) or total_minutos is None or total_minutos <= 0:
-        return "-"
-    total_minutos = int(round(total_minutos))
-    hrs = total_minutos // 60
-    mins = total_minutos % 60
-    return f"+{hrs}h {mins:02d}m"
-
-
-# --- EXPORTAR EXCEL ---
+# --- EXPORTAR EXCEL Y ESTILOS ---
 def generar_excel_descarga(df_cruce, dict_metricas, df_ranking=None):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -688,7 +738,7 @@ def color_filas_estado(val):
     return ""
 
 
-# --- LECTORES AUXILIARES ---
+# --- PROCESAMIENTO DE ARCHIVOS ---
 def procesar_excel_sae(file_excel):
     try:
         df = pd.read_excel(file_excel, header=2)
@@ -1043,7 +1093,6 @@ def procesar_drivin_pdf(file_pdf_drivin):
     return totales, df_fos, pd.DataFrame()
 
 
-# --- FUNCIÓN DE CRUCE DE DATOS GENERAL ---
 def ejecutar_cruce_completo(file_drivin, file_sae=None, file_smartsheet=None):
     if hasattr(file_drivin, "name") and file_drivin.name.endswith(".pdf"):
         totales_p, df_fos_p, df_rank_p = procesar_drivin_pdf(file_drivin)
@@ -1174,7 +1223,7 @@ def ejecutar_cruce_completo(file_drivin, file_sae=None, file_smartsheet=None):
     return totales_p, df_cruce_p, df_rank_p
 
 
-# --- INICIALIZACIÓN AUTOMÁTICA DESDE ARCHIVOS BASE EN GITHUB O CACHÉ ---
+# --- INICIALIZACIÓN AUTOMÁTICA EN CACHÉ ---
 cache_totales, cache_df_cruce, cache_df_ranking, ultima_fecha_act = cargar_cache_global()
 
 if (cache_df_cruce is None or cache_df_cruce.empty) and os.path.exists(DRIVIN_BASE_FILE):
@@ -1194,81 +1243,6 @@ if "df_cruce" not in st.session_state or st.session_state.df_cruce.empty:
     st.session_state.df_cruce = cache_df_cruce
     st.session_state.df_ranking = cache_df_ranking
     st.session_state.ultima_fecha_act = ultima_fecha_act
-
-
-# --- VENTANA MODAL FLOTANTE (CONFIRMACIÓN DE GUARDADO) ---
-@st.dialog("💾 Guardar Información en Histórico")
-def modal_guardar_historico():
-    st.write("¿Deseas guardar los datos cargados en el histórico?")
-    col_m_si, col_m_no = st.columns(2)
-
-    if "mostrar_confirmar_fecha" not in st.session_state:
-        st.session_state.mostrar_confirmar_fecha = False
-
-    with col_m_si:
-        if st.button("✅ Sí, Deseo Guardar", use_container_width=True, type="primary"):
-            st.session_state.mostrar_confirmar_fecha = True
-
-    with col_m_no:
-        if st.button("❌ No", use_container_width=True):
-            st.session_state.mostrar_modal_guardar = False
-            st.session_state.mostrar_confirmar_fecha = False
-            st.rerun()
-
-    if st.session_state.mostrar_confirmar_fecha:
-        st.divider()
-        fecha_modal = st.date_input(
-            "📅 Selecciona el día a registrar:", value=date.today()
-        )
-
-        totales_act = st.session_state.get("totales", {})
-        df_act = st.session_state.get("df_cruce", pd.DataFrame())
-
-        v_tot = totales_act.get("total_fo", 0)
-        v_int = totales_act.get("integradas", 0)
-        v_at = totales_act.get("a_tiempo", 0)
-        v_ret = totales_act.get("con_retraso", 0)
-        v_vig = totales_act.get("vigentes", 0)
-        v_ven = totales_act.get("vencidas", 0)
-        v_rec = totales_act.get("rechazadas", 0)
-
-        v_rep = 0
-        v_evt = 0
-        v_ret_rep = 0
-
-        if not df_act.empty:
-            v_rep = len(df_act[df_act["Estado_Reporte"] == "🚨 REPORTADA"]) if "Estado_Reporte" in df_act.columns else 0
-            v_evt = len(df_act[df_act["Evento"].notna() & (df_act["Evento"].astype(str).str.strip() != "-") & (df_act["Evento"].astype(str).str.strip() != "")]) if "Evento" in df_act.columns else 0
-            if "Estado de la ruta" in df_act.columns and "Estado_Reporte" in df_act.columns:
-                v_ret_rep = len(df_act[(df_act["Estado de la ruta"] == "Finalizada con Retraso") & (df_act["Estado_Reporte"] == "🚨 REPORTADA")])
-
-        evaluables = v_at + v_ret + v_ven
-        p_at = (v_at / evaluables * 100) if evaluables > 0 else 0.0
-        p_v = (v_ven / v_int * 100) if v_int > 0 else 0.0
-
-        reg = {
-            "Fecha_Registro": str(fecha_modal),
-            "FO_Totales": v_tot,
-            "Integradas": v_int,
-            "A_Tiempo": v_at,
-            "Con_Retraso": v_ret,
-            "Vigentes": v_vig,
-            "Vencidas": v_ven,
-            "Rechazadas": v_rec,
-            "FO_Reportadas": v_rep,
-            "FO_Con_Evento": v_evt,
-            "Retrasos_Reportados": v_ret_rep,
-            "Pct_A_Tiempo": round(p_at, 2),
-            "Pct_Vencidas": round(p_v, 2),
-        }
-
-        if st.button("💾 Guardar Día", use_container_width=True, type="primary"):
-            if guardar_nuevo_registro(reg):
-                st.session_state.mostrar_modal_guardar = False
-                st.session_state.mostrar_confirmar_fecha = False
-                st.rerun()
-            else:
-                st.warning(f"⚠️ El día {fecha_modal} ya existe en el histórico.")
 
 
 # --- BARRA LATERAL (ADMINISTRADOR) ---
@@ -1292,6 +1266,26 @@ with st.sidebar:
         reaplicar_cruce_con_reportes()
         st.success("✅ Sistema recargado con reportes actualizados.")
         st.rerun()
+
+    st.divider()
+
+    # --- NUEVO MÓDULO: BOTÓN CIERRE DE MES Y RESET ---
+    st.subheader("🔒 Cierre de Mes (Cero / Reset)")
+    with st.expander("🚨 Formulario Cierre de Mes"):
+        st.warning("⚠️ Esta acción guardará un respaldo completo del mes y limpiará el sistema para iniciar el nuevo periodo.")
+        nombre_mes_in = st.text_input("Mes/Año a cerrar (Ej: Enero_2026):", key="txt_mes_cierre")
+        user_cierre_in = st.text_input("Usuario Responsable del Cierre:", key="txt_user_cierre")
+        pass_cierre_in = st.text_input("Clave de Seguridad Autorizada:", type="password", key="pass_cierre")
+
+        if st.button("🔥 EJECUTAR CIERRE DE MES", type="primary", use_container_width=True):
+            if pass_cierre_in != CLAVE_AUTORIZADA_CIERRE:
+                st.error("🔑 Clave de seguridad incorrecta. Acción no autorizada.")
+            elif not nombre_mes_in or not user_cierre_in:
+                st.warning("⚠️ Debes indicar el nombre del mes y el usuario responsable.")
+            else:
+                if ejecutar_cierre_de_mes(nombre_mes_in.strip(), user_cierre_in.strip()):
+                    st.success(f"🎉 Mes '{nombre_mes_in}' cerrado exitosamente. El sistema ha iniciado de 0.")
+                    st.rerun()
 
     st.divider()
 
@@ -1417,89 +1411,9 @@ with st.sidebar:
                 st.session_state.df_ranking = df_rank_p
                 nueva_fecha_txt = datetime.now().strftime("%d/%m/%Y a las %H:%M hrs")
                 st.session_state.ultima_fecha_act = nueva_fecha_txt
-
-                st.session_state.mostrar_modal_guardar = True
                 st.rerun()
             except Exception as e:
                 st.error(f"Error al procesar la información: {e}")
-
-    st.divider()
-    st.subheader("🗓️ 2. Registrar Día en Histórico")
-    fecha_manual = st.date_input("Fecha a guardar:", value=date.today())
-
-    totales_actuales = st.session_state.get("totales", None)
-    df_actuales = st.session_state.get("df_cruce", pd.DataFrame())
-
-    val_tot = totales_actuales["total_fo"] if totales_actuales else 0
-    val_int = totales_actuales["integradas"] if totales_actuales else 0
-    val_at = totales_actuales["a_tiempo"] if totales_actuales else 0
-    val_ret = totales_actuales["con_retraso"] if totales_actuales else 0
-    val_vig = totales_actuales["vigentes"] if totales_actuales else 0
-    val_ven = totales_actuales["vencidas"] if totales_actuales else 0
-    val_rec = totales_actuales["rechazadas"] if totales_actuales else 0
-
-    val_rep = 0
-    val_evt = 0
-    val_ret_rep = 0
-
-    if not df_actuales.empty:
-        val_rep = len(df_actuales[df_actuales["Estado_Reporte"] == "🚨 REPORTADA"]) if "Estado_Reporte" in df_actuales.columns else 0
-        val_evt = len(df_actuales[df_actuales["Evento"].notna() & (df_actuales["Evento"].astype(str).str.strip() != "-") & (df_actuales["Evento"].astype(str).str.strip() != "")]) if "Evento" in df_actuales.columns else 0
-        if "Estado de la ruta" in df_actuales.columns and "Estado_Reporte" in df_actuales.columns:
-            val_ret_rep = len(df_actuales[(df_actuales["Estado de la ruta"] == "Finalizada con Retraso") & (df_actuales["Estado_Reporte"] == "🚨 REPORTADA")])
-
-    evaluables_tot = val_at + val_ret + val_ven
-    pct_at = (val_at / evaluables_tot * 100) if evaluables_tot > 0 else 0.0
-    pct_v = (val_ven / val_int * 100) if val_int > 0 else 0.0
-
-    registro_preparado = {
-        "Fecha_Registro": str(fecha_manual),
-        "FO_Totales": val_tot,
-        "Integradas": val_int,
-        "A_Tiempo": val_at,
-        "Con_Retraso": val_ret,
-        "Vigentes": val_vig,
-        "Vencidas": val_ven,
-        "Rechazadas": val_rec,
-        "FO_Reportadas": val_rep,
-        "FO_Con_Evento": val_evt,
-        "Retrasos_Reportados": val_ret_rep,
-        "Pct_A_Tiempo": round(pct_at, 2),
-        "Pct_Vencidas": round(pct_v, 2),
-    }
-
-    st.subheader("💾 3. Acciones de Histórico")
-    col_b1, col_b2 = st.columns(2)
-    with col_b1:
-        if st.button("💾 Guardar", use_container_width=True):
-            guardar_nuevo_registro(registro_preparado)
-    with col_b2:
-        if st.button("🔄 Actualizar", use_container_width=True):
-            actualizar_registro_existente(registro_preparado)
-
-    st.divider()
-    st.subheader("🗑️ 4. Eliminar Día del Histórico")
-
-    df_h_elim = cargar_historico()
-    if not df_h_elim.empty:
-        fechas_elim_list = [str(f) for f in df_h_elim["Fecha_Registro"].tolist()]
-        fecha_a_eliminar = st.selectbox(
-            "Seleccionar día a eliminar:", options=fechas_elim_list
-        )
-        clave_eliminar = st.text_input(
-            "Ingresa la clave para eliminar:", type="password", key="clave_elim"
-        )
-
-        if st.button("🔥 Eliminar Registro", use_container_width=True):
-            if eliminar_registro_historico(fecha_a_eliminar, clave_eliminar):
-                st.rerun()
-    else:
-        st.caption("No hay días guardados en el histórico para eliminar.")
-
-
-# DISPARADOR DEL MODAL
-if st.session_state.get("mostrar_modal_guardar", False):
-    modal_guardar_historico()
 
 
 # --- ENCABEZADO Y KPIS PRINCIPALES ---
@@ -1912,9 +1826,9 @@ else:
                 cnt_ven = len(df_m_filtrado[df_m_filtrado["Estado de la ruta"] == "Vencida"])
                 cnt_vig = len(df_m_filtrado[df_m_filtrado["Estado de la ruta"] == "Vigente"])
 
-                calc_tot = val_tot if (len(suc_seleccionadas) == len(suc_disponibles) and len(resp_seleccionados) == len(resp_disponibles)) else tot_f
-                calc_at = val_at if (len(suc_seleccionadas) == len(suc_disponibles) and len(resp_seleccionados) == len(resp_disponibles)) else cnt_at
-                calc_ret = val_ret if (len(suc_seleccionadas) == len(suc_disponibles) and len(resp_seleccionados) == len(resp_disponibles)) else cnt_ret
+                calc_tot = val_tot if (len(suc_seleccionadas) == len(suc_disponibles) and len(resp_seleccionados) == len(resp_seleccionados)) else tot_f
+                calc_at = val_at if (len(suc_seleccionadas) == len(suc_disponibles) and len(resp_seleccionados) == len(resp_seleccionados)) else cnt_at
+                calc_ret = val_ret if (len(suc_seleccionadas) == len(suc_disponibles) and len(resp_seleccionados) == len(resp_seleccionados)) else cnt_ret
 
                 pct_fin_tot = ((calc_at + calc_ret) / calc_tot * 100) if calc_tot > 0 else 0.0
                 pct_a_tiempo_tot = (calc_at / calc_tot * 100) if calc_tot > 0 else 0.0
@@ -2135,7 +2049,7 @@ else:
         else:
             st.info("Aún no hay reportes de FO registrados para mostrar al mandante.")
 
-    # MÓDULO 9: HISTÓRICO
+    # MÓDULO 9: HISTÓRICO Y HISTÓRICO DE CIERRES
     elif st.session_state.modulo_activo == "HISTORICO":
         st.subheader("📈 Evolución Histórica de Cumplimiento")
         df_hist = cargar_historico()
@@ -2154,8 +2068,16 @@ else:
             st.info("Aún no hay datos guardados en el histórico para graficar.")
 
         st.divider()
+        st.markdown("##### 📂 Registro Histórico de Meses Cerrados")
+        if os.path.exists(HISTORICO_CIERRES_FILE):
+            df_cierres_ver = pd.read_csv(HISTORICO_CIERRES_FILE)
+            st.dataframe(df_cierres_ver, use_container_width=True, height=200)
+        else:
+            st.caption("Aún no se han ejecutado cierres de mes en la aplicación.")
+
+        st.divider()
         st.markdown("##### 🗑️ Papelera de Respaldo")
         if not df_papelera.empty:
-            st.dataframe(df_papelera, use_container_width=True, height=250)
+            st.dataframe(df_papelera, use_container_width=True, height=200)
         else:
             st.caption("Papelera vacía.")
