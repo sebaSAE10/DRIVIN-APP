@@ -436,20 +436,24 @@ def cargar_reportes_fo():
   )
 
 
-# --- REAPLICAR REPORTES A LA TABLA DE MEMORIA ---
+# --- FUNCION CORREGIDA: REAPLICAR REPORTES CON NORMALIZACIÓN ESTRICATA ---
 def reaplicar_cruce_con_reportes():
   if "df_cruce" in st.session_state and not st.session_state.df_cruce.empty:
     df_cruce_p = st.session_state.df_cruce.copy()
     
-    # Remover viejas columnas de reporte si existen
-    for col_del in ["Estado_Reporte", "Detalle_Reporte"]:
+    # Eliminar viejas columnas si existen para rehacer el cruce limpio
+    for col_del in ["Estado_Reporte", "Detalle_Reporte", "FO_KEY"]:
       if col_del in df_cruce_p.columns:
         df_cruce_p = df_cruce_p.drop(columns=[col_del])
 
+    df_cruce_p["FO_KEY"] = df_cruce_p["FO"].apply(limpiar_fo_str)
+
     df_reps_p = cargar_reportes_fo()
     if not df_reps_p.empty:
+      df_reps_p["FO_KEY"] = df_reps_p["FO"].apply(limpiar_fo_str)
+      
       df_reps_grouped = (
-          df_reps_p.groupby("FO")
+          df_reps_p.groupby("FO_KEY")
           .agg({
               "Tipo_Problema": "last",
               "Coordinador_Komatsu": "last",
@@ -472,8 +476,8 @@ def reaplicar_cruce_con_reportes():
 
       df_cruce_p = pd.merge(
           df_cruce_p,
-          df_reps_grouped[["FO", "Estado_Reporte", "Detalle_Reporte"]],
-          on="FO",
+          df_reps_grouped[["FO_KEY", "Estado_Reporte", "Detalle_Reporte"]],
+          on="FO_KEY",
           how="left",
       )
       df_cruce_p["Estado_Reporte"] = df_cruce_p["Estado_Reporte"].fillna("Sin Reporte")
@@ -482,7 +486,9 @@ def reaplicar_cruce_con_reportes():
       df_cruce_p["Estado_Reporte"] = "Sin Reporte"
       df_cruce_p["Detalle_Reporte"] = "-"
 
-    # Reordenar columnas manteniendo el estado del reporte al frente
+    if "FO_KEY" in df_cruce_p.columns:
+      df_cruce_p = df_cruce_p.drop(columns=["FO_KEY"])
+
     cols_order = [
         "FO",
         "Fin plan",
@@ -1095,11 +1101,14 @@ def ejecutar_cruce_completo(file_drivin, file_sae=None, file_smartsheet=None):
     )
     df_cruce_p["FOLIO"] = df_cruce_p["FOLIO"].apply(limpiar_fo_str)
 
-    # Integración de reportes
+    # Integración de reportes normalizada por FO_KEY
     df_reps_p = cargar_reportes_fo()
     if not df_reps_p.empty:
+      df_cruce_p["FO_KEY"] = df_cruce_p["FO"].apply(limpiar_fo_str)
+      df_reps_p["FO_KEY"] = df_reps_p["FO"].apply(limpiar_fo_str)
+
       df_reps_grouped = (
-          df_reps_p.groupby("FO")
+          df_reps_p.groupby("FO_KEY")
           .agg({
               "Tipo_Problema": "last",
               "Coordinador_Komatsu": "last",
@@ -1122,8 +1131,8 @@ def ejecutar_cruce_completo(file_drivin, file_sae=None, file_smartsheet=None):
 
       df_cruce_p = pd.merge(
           df_cruce_p,
-          df_reps_grouped[["FO", "Estado_Reporte", "Detalle_Reporte"]],
-          on="FO",
+          df_reps_grouped[["FO_KEY", "Estado_Reporte", "Detalle_Reporte"]],
+          on="FO_KEY",
           how="left",
       )
       df_cruce_p["Estado_Reporte"] = df_cruce_p["Estado_Reporte"].fillna(
@@ -1132,6 +1141,9 @@ def ejecutar_cruce_completo(file_drivin, file_sae=None, file_smartsheet=None):
       df_cruce_p["Detalle_Reporte"] = df_cruce_p[
           "Detalle_Reporte"
       ].fillna("-")
+      
+      if "FO_KEY" in df_cruce_p.columns:
+        df_cruce_p = df_cruce_p.drop(columns=["FO_KEY"])
     else:
       df_cruce_p["Estado_Reporte"] = "Sin Reporte"
       df_cruce_p["Detalle_Reporte"] = "-"
@@ -1769,7 +1781,7 @@ else:
         df_vv_filtrado = df_vv_filtrado[df_vv_filtrado["SUCURSAL"].isin(sucursal_sel)]
 
       st.dataframe(
-          df_vv_filtrado.style.map(color_filas_estado, subset=["Estado de la ruta"]),
+          df_vv_filtrado.style.map(color_filas_estado, subset=["Estado de la ruta", "Estado_Reporte"]),
           use_container_width=True,
           height=500,
       )
