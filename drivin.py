@@ -436,6 +436,78 @@ def cargar_reportes_fo():
   )
 
 
+# --- REAPLICAR REPORTES A LA TABLA DE MEMORIA ---
+def reaplicar_cruce_con_reportes():
+  if "df_cruce" in st.session_state and not st.session_state.df_cruce.empty:
+    df_cruce_p = st.session_state.df_cruce.copy()
+    
+    # Remover viejas columnas de reporte si existen
+    for col_del in ["Estado_Reporte", "Detalle_Reporte"]:
+      if col_del in df_cruce_p.columns:
+        df_cruce_p = df_cruce_p.drop(columns=[col_del])
+
+    df_reps_p = cargar_reportes_fo()
+    if not df_reps_p.empty:
+      df_reps_grouped = (
+          df_reps_p.groupby("FO")
+          .agg({
+              "Tipo_Problema": "last",
+              "Coordinador_Komatsu": "last",
+              "Responsable": "last",
+              "Detalle_Observacion": "last",
+          })
+          .reset_index()
+      )
+      df_reps_grouped["Estado_Reporte"] = "🚨 REPORTADA"
+      df_reps_grouped["Detalle_Reporte"] = (
+          "Motivo: "
+          + df_reps_grouped["Tipo_Problema"].astype(str)
+          + " | Coord. Komatsu: "
+          + df_reps_grouped["Coordinador_Komatsu"].astype(str)
+          + " | Resp: "
+          + df_reps_grouped["Responsable"].astype(str)
+          + " | Obs: "
+          + df_reps_grouped["Detalle_Observacion"].astype(str)
+      )
+
+      df_cruce_p = pd.merge(
+          df_cruce_p,
+          df_reps_grouped[["FO", "Estado_Reporte", "Detalle_Reporte"]],
+          on="FO",
+          how="left",
+      )
+      df_cruce_p["Estado_Reporte"] = df_cruce_p["Estado_Reporte"].fillna("Sin Reporte")
+      df_cruce_p["Detalle_Reporte"] = df_cruce_p["Detalle_Reporte"].fillna("-")
+    else:
+      df_cruce_p["Estado_Reporte"] = "Sin Reporte"
+      df_cruce_p["Detalle_Reporte"] = "-"
+
+    # Reordenar columnas manteniendo el estado del reporte al frente
+    cols_order = [
+        "FO",
+        "Fin plan",
+        "Fin real",
+        "Desviación",
+        "Conductor",
+        "Estado_Reporte",
+        "Detalle_Reporte",
+        "SUCURSAL",
+        "RESPONSABLE",
+        "Inicio Planificado",
+        "Fin Planificado",
+        "Estado de la ruta",
+        "Evento",
+        "ORIGEN",
+        "DESTINO",
+        "FOLIO",
+    ]
+    cols_exist = [c for c in cols_order if c in df_cruce_p.columns]
+    df_cruce_p = df_cruce_p[cols_exist]
+
+    st.session_state.df_cruce = df_cruce_p
+    guardar_cache_global(st.session_state.totales, df_cruce_p, st.session_state.df_ranking)
+
+
 def guardar_reporte_fo(
     fo, sucursal, problema, coord_komatsu, responsable, observacion, file_obj
 ):
@@ -475,6 +547,7 @@ def guardar_reporte_fo(
   }
   df_rep = pd.concat([df_rep, pd.DataFrame([nuevo_rep])], ignore_index=True)
   df_rep.to_csv(REPORTES_FILE, index=False)
+  reaplicar_cruce_con_reportes()
   return True
 
 
@@ -516,6 +589,7 @@ def editar_reporte_fo(
       )
 
     df_rep.to_csv(REPORTES_FILE, index=False)
+    reaplicar_cruce_con_reportes()
     return True
   return False
 
@@ -526,6 +600,7 @@ def eliminar_reporte_fo(fo_target):
   if fo_target_limpia in df_rep["FO"].values:
     df_rep = df_rep[df_rep["FO"] != fo_target_limpia]
     df_rep.to_csv(REPORTES_FILE, index=False)
+    reaplicar_cruce_con_reportes()
     return True
   return False
 
@@ -1200,18 +1275,8 @@ with st.sidebar:
     st.info(f"🕒 **Última actualización local:**\n{fecha_act_display}")
 
   if st.button("🔄 Actualizar / Recargar Sistema", use_container_width=True):
-    st.cache_data.clear()
-    (
-        c_totales,
-        c_df_cruce,
-        c_df_ranking,
-        c_fecha_act,
-    ) = cargar_cache_global()
-    st.session_state.totales = c_totales
-    st.session_state.df_cruce = c_df_cruce
-    st.session_state.df_ranking = c_df_ranking
-    st.session_state.ultima_fecha_act = c_fecha_act
-    st.success("✅ Sistema recargado exitosamente.")
+    reaplicar_cruce_con_reportes()
+    st.success("✅ Sistema recargado con reportes actualizados.")
     st.rerun()
 
   st.divider()
@@ -1609,7 +1674,7 @@ if st.session_state.modulo_activo == "INICIO":
 
   with b_col2:
     st.markdown('<div class="nav-header">📊 Rendimiento & Metas</div>', unsafe_allow_html=True)
-    if st.button("📅 Simulación KPIS", use_container_width=True):
+    if st.button("📅 Rendimiento Rango Fechas", use_container_width=True):
       st.session_state.modulo_activo = "RANGO_FECHAS"
       st.rerun()
     if st.button("📊 Metas y Gráficos (95%/90%)", use_container_width=True):
@@ -1624,7 +1689,7 @@ if st.session_state.modulo_activo == "INICIO":
     if st.button("📝 Reportar / Editar FO", use_container_width=True):
       st.session_state.modulo_activo = "REPORTAR"
       st.rerun()
-    if st.button("📊 FO reportadas", use_container_width=True):
+    if st.button("📊 Reportes para el Mandante", use_container_width=True):
       st.session_state.modulo_activo = "MANDANTE"
       st.rerun()
 
@@ -1941,7 +2006,7 @@ else:
         if st.form_submit_button("📩 Guardar Nuevo Reporte", type="primary", use_container_width=True):
           if fo_in and resp_in:
             guardar_reporte_fo(fo_in, suc_in, prob_in, coord_sel, resp_in, obs_in, arch_in)
-            st.success("✅ Reporte guardado con éxito.")
+            st.success("✅ Reporte guardado e integrado correctamente.")
             st.rerun()
 
     else:
