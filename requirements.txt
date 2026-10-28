@@ -4,3 +4,4 @@ plotly
 pypdf
 openpyxl
 pyarrow
+st-gsheets-connection
