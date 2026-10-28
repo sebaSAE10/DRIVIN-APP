@@ -12,6 +12,13 @@ import plotly.graph_objects as go
 import pypdf
 import streamlit as st
 
+# Integración con Google Sheets
+try:
+    from streamlit_gsheets import GSheetsConnection
+    HAS_GSHEETS = True
+except ImportError:
+    HAS_GSHEETS = False
+
 # Configuración de la página Streamlit
 st.set_page_config(
     page_title="Control Operativo Drivin x SAE x SmartSheet",
@@ -70,7 +77,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# RUTAS DE ARCHIVOS BASE EN GITHUB Y ARCHIVOS DEL SISTEMA
+# RUTAS DE ARCHIVOS BASE Y DEL SISTEMA
 DRIVIN_BASE_FILE = "drivin_base.xlsx"
 SAE_BASE_FILE = "sae_base.xlsx"
 SMARTSHEET_BASE_FILE = "smartsheet_base.xlsx"
@@ -89,7 +96,7 @@ TOTALES_CACHE_FILE = "totales_cache.pkl"
 RANKING_CACHE_FILE = "ranking_cache.parquet"
 INFO_ACTUALIZACION_FILE = "ultima_actualizacion.txt"
 
-# Crear carpetas del sistema
+# Crear carpetas del sistema si no existen
 for directorio in [CAPTURAS_DIR, RESPALDOS_MES_DIR]:
     if not os.path.exists(directorio):
         os.makedirs(directorio)
@@ -98,10 +105,10 @@ for directorio in [CAPTURAS_DIR, RESPALDOS_MES_DIR]:
 if "modulo_activo" not in st.session_state:
     st.session_state.modulo_activo = "INICIO"
 
-CLAVE_AUTORIZADA_CIERRE = "autorizado2026"  # Clave de seguridad para cerrar mes
+CLAVE_AUTORIZADA_CIERRE = "autorizado2026"
 
 
-# --- FUNCIONES DE SANITIZACIÓN Y NORMALIZACIÓN DE CLAVES FO ---
+# --- FUNCIONES DE SANITIZACIÓN Y PARSEO ---
 def limpiar_fo_str(val):
     if pd.isna(val) or str(val).strip() in ["", "-", "nan", "None"]:
         return ""
@@ -211,7 +218,7 @@ def calcular_desviacion_automatica(fin_plan_str, fin_real_str):
     return f"+{hrs}h {mins:02d}m"
 
 
-# --- OPCIONES DINÁMICAS ---
+# --- OPCIONES DINÁMICAS Y CONFIGURACIONES ---
 OPCIONES_PROBLEMAS_DEFECTO = [
     "FO informada tarde",
     "FO con fecha errónea",
@@ -277,7 +284,136 @@ def guardar_opciones_coordinadores(lista_opciones):
         st.error(f"Error al guardar opciones de coordinadores: {e}")
 
 
-# --- CACHÉ Y PERSISTENCIA ---
+# --- GESTIÓN DE REPORTES Y PERSISTENCIA (GOOGLE SHEETS / CSV LOCAL) ---
+def cargar_reportes_fo():
+    if HAS_GSHEETS and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
+        try:
+            conn = st.connection("gsheets", type=GSheetsConnection)
+            df = conn.read(ttl=0)
+            if df is not None and not df.empty:
+                df = df.astype(str)
+                df["FO"] = df["FO"].apply(limpiar_fo_str)
+                if "Coordinador_Komatsu" not in df.columns:
+                    df["Coordinador_Komatsu"] = "-"
+                return df
+        except Exception as e:
+            st.warning(f"⚠️ Leyendo respaldos locales por problemas de conexión con Google Sheets: {e}")
+
+    if os.path.exists(REPORTES_FILE):
+        df = pd.read_csv(REPORTES_FILE, dtype=str)
+        df["FO"] = df["FO"].apply(limpiar_fo_str)
+        if "Coordinador_Komatsu" not in df.columns:
+            df["Coordinador_Komatsu"] = "-"
+        return df
+
+    return pd.DataFrame(
+        columns=[
+            "Fecha_Reporte",
+            "FO",
+            "Sucursal",
+            "Tipo_Problema",
+            "Coordinador_Komatsu",
+            "Responsable",
+            "Detalle_Observacion",
+            "Tipo_Respaldo",
+            "Archivo_Pantallazo",
+        ]
+    )
+
+
+def guardar_dataframe_reportes(df_reportes_completo):
+    df_reportes_completo = df_reportes_completo.astype(str)
+    df_reportes_completo.to_csv(REPORTES_FILE, index=False)
+
+    if HAS_GSHEETS and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
+        try:
+            conn = st.connection("gsheets", type=GSheetsConnection)
+            conn.update(data=df_reportes_completo)
+            return True
+        except Exception as e:
+            st.error(f"Error al actualizar datos en Google Sheets: {e}")
+            return False
+    return True
+
+
+def guardar_reporte_fo(fo, sucursal, problema, coord_komatsu, responsable, observacion, file_obj):
+    df_rep = cargar_reportes_fo()
+    fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    fo_limpia = limpiar_fo_str(fo)
+
+    nombre_archivo = "Sin respaldo"
+    tipo_res = "Sin archivo"
+
+    if file_obj is not None:
+        ext = os.path.splitext(file_obj.name)[1].lower()
+        nombre_archivo = f"FO_{fo_limpia}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
+        path_file = os.path.join(CAPTURAS_DIR, nombre_archivo)
+        with open(path_file, "wb") as f:
+            f.write(file_obj.getbuffer())
+
+        tipo_res = "Imagen / Foto" if ext in [".png", ".jpg", ".jpeg"] else ("Documento PDF" if ext == ".pdf" else "Correo / Mensaje")
+
+    nuevo_rep = {
+        "Fecha_Reporte": fecha_actual,
+        "FO": fo_limpia,
+        "Sucursal": sucursal,
+        "Tipo_Problema": problema,
+        "Coordinador_Komatsu": coord_komatsu if coord_komatsu else "-",
+        "Responsable": responsable,
+        "Detalle_Observacion": observacion,
+        "Tipo_Respaldo": tipo_res,
+        "Archivo_Pantallazo": nombre_archivo,
+    }
+
+    df_rep = pd.concat([df_rep, pd.DataFrame([nuevo_rep])], ignore_index=True)
+    guardar_dataframe_reportes(df_rep)
+    reaplicar_cruce_con_reportes()
+    return True
+
+
+def editar_reporte_fo(fo_target, sucursal, problema, coord_komatsu, responsable, observacion, file_obj=None):
+    df_rep = cargar_reportes_fo()
+    fo_target_limpia = limpiar_fo_str(fo_target)
+    idx_matches = df_rep[df_rep["FO"] == fo_target_limpia].index
+
+    if len(idx_matches) > 0:
+        idx = idx_matches[-1]
+        df_rep.at[idx, "Sucursal"] = sucursal
+        df_rep.at[idx, "Tipo_Problema"] = problema
+        df_rep.at[idx, "Coordinador_Komatsu"] = coord_komatsu if coord_komatsu else "-"
+        df_rep.at[idx, "Responsable"] = responsable
+        df_rep.at[idx, "Detalle_Observacion"] = observacion
+
+        if file_obj is not None:
+            ext = os.path.splitext(file_obj.name)[1].lower()
+            nombre_archivo = f"FO_{fo_target_limpia}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
+            path_file = os.path.join(CAPTURAS_DIR, nombre_archivo)
+            with open(path_file, "wb") as f:
+                f.write(file_obj.getbuffer())
+
+            df_rep.at[idx, "Archivo_Pantallazo"] = nombre_archivo
+            df_rep.at[idx, "Tipo_Respaldo"] = (
+                "Imagen / Foto" if ext in [".png", ".jpg", ".jpeg"] else ("Documento PDF" if ext == ".pdf" else "Correo / Mensaje")
+            )
+
+        guardar_dataframe_reportes(df_rep)
+        reaplicar_cruce_con_reportes()
+        return True
+    return False
+
+
+def eliminar_reporte_fo(fo_target):
+    df_rep = cargar_reportes_fo()
+    fo_target_limpia = limpiar_fo_str(fo_target)
+    if fo_target_limpia in df_rep["FO"].values:
+        df_rep = df_rep[df_rep["FO"] != fo_target_limpia]
+        guardar_dataframe_reportes(df_rep)
+        reaplicar_cruce_con_reportes()
+        return True
+    return False
+
+
+# --- CACHÉ Y MANEJO DE HISTÓRICO ---
 def guardar_cache_global(totales, df_cruce, df_ranking):
     try:
         if not df_cruce.empty:
@@ -291,7 +427,7 @@ def guardar_cache_global(totales, df_cruce, df_ranking):
         with open(INFO_ACTUALIZACION_FILE, "w", encoding="utf-8") as f:
             f.write(fecha_hora_str)
     except Exception as e:
-        st.error(f"Error guardando archivos locales: {e}")
+        st.error(f"Error guardando archivos locales de caché: {e}")
 
 
 def cargar_cache_global():
@@ -339,19 +475,9 @@ def cargar_historico():
         return df.sort_values(by="Fecha_Registro")
     return pd.DataFrame(
         columns=[
-            "Fecha_Registro",
-            "FO_Totales",
-            "Integradas",
-            "A_Tiempo",
-            "Con_Retraso",
-            "Vigentes",
-            "Vencidas",
-            "Rechazadas",
-            "FO_Reportadas",
-            "FO_Con_Evento",
-            "Retrasos_Reportados",
-            "Pct_A_Tiempo",
-            "Pct_Vencidas",
+            "Fecha_Registro", "FO_Totales", "Integradas", "A_Tiempo", "Con_Retraso",
+            "Vigentes", "Vencidas", "Rechazadas", "FO_Reportadas", "FO_Con_Evento",
+            "Retrasos_Reportados", "Pct_A_Tiempo", "Pct_Vencidas"
         ]
     )
 
@@ -406,9 +532,7 @@ def eliminar_registro_historico(fecha_eliminar_str, clave_ingresada):
         st.toast(f"❌ No se encontró el día {fecha_eliminar_str} en el histórico.", icon="❌")
         return False
 
-    fila_elim = df_hist[
-        df_hist["Fecha_Registro"].astype(str) == fecha_eliminar_str
-    ].copy()
+    fila_elim = df_hist[df_hist["Fecha_Registro"].astype(str) == fecha_eliminar_str].copy()
     fila_elim["Fecha_Eliminacion"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     df_papelera = cargar_papelera()
@@ -422,35 +546,12 @@ def eliminar_registro_historico(fecha_eliminar_str, clave_ingresada):
     return True
 
 
-def cargar_reportes_fo():
-    if os.path.exists(REPORTES_FILE):
-        df = pd.read_csv(REPORTES_FILE, dtype=str)
-        df["FO"] = df["FO"].apply(limpiar_fo_str)
-        if "Coordinador_Komatsu" not in df.columns:
-            df["Coordinador_Komatsu"] = "-"
-        return df
-    return pd.DataFrame(
-        columns=[
-            "Fecha_Reporte",
-            "FO",
-            "Sucursal",
-            "Tipo_Problema",
-            "Coordinador_Komatsu",
-            "Responsable",
-            "Detalle_Observacion",
-            "Tipo_Respaldo",
-            "Archivo_Pantallazo",
-        ]
-    )
-
-
-# --- LÓGICA DE CIERRE DE MES Y RESPALDO ---
+# --- LÓGICA DE CIERRE DE MES ---
 def ejecutar_cierre_de_mes(nombre_mes, usuario_resp):
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     carpeta_destino = os.path.join(RESPALDOS_MES_DIR, f"Cierre_{nombre_mes}_{stamp}")
     os.makedirs(carpeta_destino, exist_ok=True)
 
-    # 1. Guardar copia de los archivos activos en la carpeta de respaldo
     df_cruce_actual = st.session_state.get("df_cruce", pd.DataFrame())
     df_reps_actual = cargar_reportes_fo()
     df_hist_actual = cargar_historico()
@@ -462,12 +563,10 @@ def ejecutar_cierre_de_mes(nombre_mes, usuario_resp):
     if not df_hist_actual.empty:
         df_hist_actual.to_excel(os.path.join(carpeta_destino, "Historico_Diario.xlsx"), index=False)
 
-    # Copiar carpeta de capturas de pantallas
     if os.path.exists(CAPTURAS_DIR) and len(os.listdir(CAPTURAS_DIR)) > 0:
         dest_capturas = os.path.join(carpeta_destino, "capturas_reportes")
         shutil.copytree(CAPTURAS_DIR, dest_capturas, dirs_exist_ok=True)
 
-    # 2. Registrar el cierre en el archivo maestro de cierres
     reg_cierre = {
         "Fecha_Cierre": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "Nombre_Periodo": nombre_mes,
@@ -483,35 +582,22 @@ def ejecutar_cierre_de_mes(nombre_mes, usuario_resp):
     df_cierres = pd.concat([df_cierres, pd.DataFrame([reg_cierre])], ignore_index=True)
     df_cierres.to_csv(HISTORICO_CIERRES_FILE, index=False)
 
-    # 3. RESET DEL SISTEMA (EMPEZAR DE 0)
+    # RESET COMPLETO DE MEMORIA Y HOJA
     st.session_state.df_cruce = pd.DataFrame()
     st.session_state.df_ranking = pd.DataFrame()
     st.session_state.totales = {
-        "total_fo": 0,
-        "integradas": 0,
-        "a_tiempo": 0,
-        "con_retraso": 0,
-        "vigentes": 0,
-        "vencidas": 0,
-        "rechazadas": 0,
+        "total_fo": 0, "integradas": 0, "a_tiempo": 0, "con_retraso": 0,
+        "vigentes": 0, "vencidas": 0, "rechazadas": 0
     }
 
-    # Vaciar archivo de reportes CSV
-    pd.DataFrame(
+    df_vacio_reps = pd.DataFrame(
         columns=[
-            "Fecha_Reporte",
-            "FO",
-            "Sucursal",
-            "Tipo_Problema",
-            "Coordinador_Komatsu",
-            "Responsable",
-            "Detalle_Observacion",
-            "Tipo_Respaldo",
-            "Archivo_Pantallazo",
+            "Fecha_Reporte", "FO", "Sucursal", "Tipo_Problema", "Coordinador_Komatsu",
+            "Responsable", "Detalle_Observacion", "Tipo_Respaldo", "Archivo_Pantallazo"
         ]
-    ).to_csv(REPORTES_FILE, index=False)
+    )
+    guardar_dataframe_reportes(df_vacio_reps)
 
-    # Eliminar archivos de caché local
     for arch_cache in [CRUCE_CACHE_FILE, TOTALES_CACHE_FILE, RANKING_CACHE_FILE]:
         if os.path.exists(arch_cache):
             try:
@@ -523,7 +609,7 @@ def ejecutar_cierre_de_mes(nombre_mes, usuario_resp):
     return True
 
 
-# --- REAPLICAR REPORTES A LA TABLA DE MEMORIA ---
+# --- REAPLICAR REPORTES A TABLAS EN MEMORIA ---
 def reaplicar_cruce_con_reportes():
     if "df_cruce" in st.session_state and not st.session_state.df_cruce.empty:
         df_cruce_p = st.session_state.df_cruce.copy()
@@ -576,22 +662,10 @@ def reaplicar_cruce_con_reportes():
             df_cruce_p = df_cruce_p.drop(columns=["FO_KEY"])
 
         cols_order = [
-            "FO",
-            "Estado_Reporte",
-            "Fin plan",
-            "Fin real",
-            "Desviación",
-            "Conductor",
-            "Detalle_Reporte",
-            "SUCURSAL",
-            "RESPONSABLE",
-            "Inicio Planificado",
-            "Fin Planificado",
-            "Estado de la ruta",
-            "Evento",
-            "ORIGEN",
-            "DESTINO",
-            "FOLIO",
+            "FO", "Estado_Reporte", "Fin plan", "Fin real", "Desviación",
+            "Conductor", "Detalle_Reporte", "SUCURSAL", "RESPONSABLE",
+            "Inicio Planificado", "Fin Planificado", "Estado de la ruta",
+            "Evento", "ORIGEN", "DESTINO", "FOLIO"
         ]
         cols_exist = [c for c in cols_order if c in df_cruce_p.columns]
         df_cruce_p = df_cruce_p[cols_exist]
@@ -600,117 +674,16 @@ def reaplicar_cruce_con_reportes():
         guardar_cache_global(st.session_state.totales, df_cruce_p, st.session_state.df_ranking)
 
 
-def guardar_reporte_fo(
-    fo, sucursal, problema, coord_komatsu, responsable, observacion, file_obj
-):
-    df_rep = cargar_reportes_fo()
-    fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    fo_limpia = limpiar_fo_str(fo)
-
-    nombre_archivo = "Sin respaldo"
-    tipo_res = "Sin archivo"
-
-    if file_obj is not None:
-        ext = os.path.splitext(file_obj.name)[1].lower()
-        nombre_archivo = (
-            f"FO_{fo_limpia}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
-        )
-        path_file = os.path.join(CAPTURAS_DIR, nombre_archivo)
-        with open(path_file, "wb") as f:
-            f.write(file_obj.getbuffer())
-
-        if ext in [".png", ".jpg", ".jpeg"]:
-            tipo_res = "Imagen / Foto"
-        elif ext == ".pdf":
-            tipo_res = "Documento PDF"
-        else:
-            tipo_res = "Correo / Mensaje"
-
-    nuevo_rep = {
-        "Fecha_Reporte": fecha_actual,
-        "FO": fo_limpia,
-        "Sucursal": sucursal,
-        "Tipo_Problema": problema,
-        "Coordinador_Komatsu": coord_komatsu if coord_komatsu else "-",
-        "Responsable": responsable,
-        "Detalle_Observacion": observacion,
-        "Tipo_Respaldo": tipo_res,
-        "Archivo_Pantallazo": nombre_archivo,
-    }
-    df_rep = pd.concat([df_rep, pd.DataFrame([nuevo_rep])], ignore_index=True)
-    df_rep.to_csv(REPORTES_FILE, index=False)
-    reaplicar_cruce_con_reportes()
-    return True
-
-
-def editar_reporte_fo(
-    fo_target,
-    sucursal,
-    problema,
-    coord_komatsu,
-    responsable,
-    observacion,
-    file_obj=None,
-):
-    df_rep = cargar_reportes_fo()
-    fo_target_limpia = limpiar_fo_str(fo_target)
-    idx_matches = df_rep[df_rep["FO"] == fo_target_limpia].index
-
-    if len(idx_matches) > 0:
-        idx = idx_matches[-1]
-        df_rep.at[idx, "Sucursal"] = sucursal
-        df_rep.at[idx, "Tipo_Problema"] = problema
-        df_rep.at[idx, "Coordinador_Komatsu"] = (
-            coord_komatsu if coord_komatsu else "-"
-        )
-        df_rep.at[idx, "Responsable"] = responsable
-        df_rep.at[idx, "Detalle_Observacion"] = observacion
-
-        if file_obj is not None:
-            ext = os.path.splitext(file_obj.name)[1].lower()
-            nombre_archivo = f"FO_{fo_target_limpia}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
-            path_file = os.path.join(CAPTURAS_DIR, nombre_archivo)
-            with open(path_file, "wb") as f:
-                f.write(file_obj.getbuffer())
-
-            df_rep.at[idx, "Archivo_Pantallazo"] = nombre_archivo
-            df_rep.at[idx, "Tipo_Respaldo"] = (
-                "Imagen / Foto"
-                if ext in [".png", ".jpg", ".jpeg"]
-                else ("Documento PDF" if ext == ".pdf" else "Correo / Mensaje")
-            )
-
-        df_rep.to_csv(REPORTES_FILE, index=False)
-        reaplicar_cruce_con_reportes()
-        return True
-    return False
-
-
-def eliminar_reporte_fo(fo_target):
-    df_rep = cargar_reportes_fo()
-    fo_target_limpia = limpiar_fo_str(fo_target)
-    if fo_target_limpia in df_rep["FO"].values:
-        df_rep = df_rep[df_rep["FO"] != fo_target_limpia]
-        df_rep.to_csv(REPORTES_FILE, index=False)
-        reaplicar_cruce_con_reportes()
-        return True
-    return False
-
-
-# --- EXPORTAR EXCEL Y ESTILOS ---
+# --- EXPORTACIÓN A EXCEL Y COLORIDO DE TABLAS ---
 def generar_excel_descarga(df_cruce, dict_metricas, df_ranking=None):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_met = pd.DataFrame([dict_metricas])
         df_met.to_excel(writer, sheet_name="Resumen_KPIs", index=False)
         df_cruce.to_excel(writer, sheet_name="Vencidas_y_Vigentes", index=False)
-        df_retraso = df_cruce[
-            df_cruce["Estado de la ruta"] == "Finalizada con Retraso"
-        ]
+        df_retraso = df_cruce[df_cruce["Estado de la ruta"] == "Finalizada con Retraso"]
         if not df_retraso.empty:
-            df_retraso.to_excel(
-                writer, sheet_name="Finalizadas_Con_Retraso", index=False
-            )
+            df_retraso.to_excel(writer, sheet_name="Finalizadas_Con_Retraso", index=False)
         if df_ranking is not None and not df_ranking.empty:
             df_ranking.to_excel(writer, sheet_name="Ranking_Conductores", index=False)
     return output.getvalue()
@@ -738,7 +711,7 @@ def color_filas_estado(val):
     return ""
 
 
-# --- PROCESAMIENTO DE ARCHIVOS ---
+# --- PROCESAMIENTO DE ARCHIVOS SAE / SMARTSHEET / DRIVIN ---
 def procesar_excel_sae(file_excel):
     try:
         df = pd.read_excel(file_excel, header=2)
@@ -762,9 +735,7 @@ def procesar_smartsheet(file_sm):
             if pd.isna(val):
                 return "PENDIENTE EN GO TRUCK"
             text = str(val).strip()
-            text_limpio = re.sub(
-                r"^(descripción:|descripcion:)\s*", "", text, flags=re.IGNORECASE
-            ).strip()
+            text_limpio = re.sub(r"^(descripción:|descripcion:)\s*", "", text, flags=re.IGNORECASE).strip()
             return text_limpio if text_limpio else "PENDIENTE EN GO TRUCK"
 
         df_clean["FO"] = df_clean["FO"].apply(limpiar_fo_str)
@@ -777,13 +748,8 @@ def procesar_smartsheet(file_sm):
 
 def procesar_drivin_excel(file_excel_drivin):
     totales = {
-        "total_fo": 0,
-        "integradas": 0,
-        "a_tiempo": 0,
-        "con_retraso": 0,
-        "vigentes": 0,
-        "vencidas": 0,
-        "rechazadas": 0,
+        "total_fo": 0, "integradas": 0, "a_tiempo": 0, "con_retraso": 0,
+        "vigentes": 0, "vencidas": 0, "rechazadas": 0
     }
     lista_fos = []
     df_ranking = pd.DataFrame()
@@ -801,26 +767,9 @@ def procesar_drivin_excel(file_excel_drivin):
         df_vv = pd.read_excel(xls, sheet_name=sheet_vv)
         df_vv = df_vv.dropna(subset=["FO"])
         for _, row in df_vv.iterrows():
-            inicio_p = formatear_fecha_str(
-                buscar_valor_columna_flexible(
-                    row, ["inicio plan", "inicio planificado", "inicio"]
-                )
-            )
-            fin_p = formatear_fecha_str(
-                buscar_valor_columna_flexible(
-                    row, ["fin plan", "fin planificado", "fin estimad"]
-                )
-            )
-            val_fin_real = buscar_valor_columna_flexible(
-                row,
-                [
-                    "fin real",
-                    "fin de entrega real",
-                    "llegada real",
-                    "cierre real",
-                    "fecha real",
-                ],
-            )
+            inicio_p = formatear_fecha_str(buscar_valor_columna_flexible(row, ["inicio plan", "inicio planificado", "inicio"]))
+            fin_p = formatear_fecha_str(buscar_valor_columna_flexible(row, ["fin plan", "fin planificado", "fin estimad"]))
+            val_fin_real = buscar_valor_columna_flexible(row, ["fin real", "fin de entrega real", "llegada real", "cierre real", "fecha real"])
             fin_r = formatear_fecha_str(val_fin_real)
 
             lista_fos.append({
@@ -831,12 +780,8 @@ def procesar_drivin_excel(file_excel_drivin):
                 "Inicio Planificado": inicio_p,
                 "Fin Planificado": fin_p,
                 "Conductor": str(row.get("Conductor", "-")),
-                "Estado de la ruta": (
-                    str(row.get("Estado", "Vigente")).strip().capitalize()
-                ),
-                "Evento": (
-                    "-" if pd.isna(row.get("Evento")) else str(row.get("Evento"))
-                ),
+                "Estado de la ruta": str(row.get("Estado", "Vigente")).strip().capitalize(),
+                "Evento": "-" if pd.isna(row.get("Evento")) else str(row.get("Evento")),
                 "Desviación": "-",
             })
 
@@ -851,32 +796,13 @@ def procesar_drivin_excel(file_excel_drivin):
         df_ret = df_ret.dropna(subset=["FO"])
 
         for _, row in df_ret.iterrows():
-            inicio_p = formatear_fecha_str(
-                buscar_valor_columna_flexible(
-                    row, ["inicio plan", "inicio planificado", "inicio"]
-                )
-            )
-            fin_p = formatear_fecha_str(
-                buscar_valor_columna_flexible(
-                    row, ["fin plan", "fin planificado", "fin estimad"]
-                )
-            )
-            val_fin_real = buscar_valor_columna_flexible(
-                row,
-                [
-                    "fin real",
-                    "fin de entrega real",
-                    "llegada real",
-                    "cierre real",
-                    "fecha real",
-                ],
-            )
+            inicio_p = formatear_fecha_str(buscar_valor_columna_flexible(row, ["inicio plan", "inicio planificado", "inicio"]))
+            fin_p = formatear_fecha_str(buscar_valor_columna_flexible(row, ["fin plan", "fin planificado", "fin estimad"]))
+            val_fin_real = buscar_valor_columna_flexible(row, ["fin real", "fin de entrega real", "llegada real", "cierre real", "fecha real"])
             fin_r = formatear_fecha_str(val_fin_real)
 
             desviacion_val = "-"
-            val_desv = buscar_valor_columna_flexible(
-                row, ["desviacion", "desfase", "delay"]
-            )
+            val_desv = buscar_valor_columna_flexible(row, ["desviacion", "desfase", "delay"])
             if val_desv:
                 desviacion_val = str(val_desv).strip()
 
@@ -895,9 +821,7 @@ def procesar_drivin_excel(file_excel_drivin):
                 "Fin Planificado": fin_p,
                 "Conductor": str(row.get("Conductor", "-")),
                 "Estado de la ruta": "Finalizada con Retraso",
-                "Evento": (
-                    "-" if pd.isna(row.get("Evento")) else str(row.get("Evento"))
-                ),
+                "Evento": "-" if pd.isna(row.get("Evento")) else str(row.get("Evento")),
                 "Desviación": desviacion_val,
             })
 
@@ -905,11 +829,7 @@ def procesar_drivin_excel(file_excel_drivin):
     if sheet_rank:
         df_ranking = pd.read_excel(xls, sheet_name=sheet_rank)
 
-    sheet_tot = (
-        sheet_names_map.get("hoja4")
-        or sheet_names_map.get("hoja 4")
-        or sheet_names_map.get("totales")
-    )
+    sheet_tot = sheet_names_map.get("hoja4") or sheet_names_map.get("hoja 4") or sheet_names_map.get("totales")
     if sheet_tot:
         df_tot = pd.read_excel(xls, sheet_name=sheet_tot, header=None)
         dict_t = {}
@@ -926,33 +846,14 @@ def procesar_drivin_excel(file_excel_drivin):
 
     df_fos = pd.DataFrame(lista_fos)
     if not df_fos.empty:
-        df_fos["Prioridad"] = (
-            df_fos["Estado de la ruta"]
-            .map({
-                "Vencida": 1,
-                "Rechazada": 2,
-                "Finalizada con Retraso": 3,
-                "Vigente": 4,
-            })
-            .fillna(5)
-        )
-        df_fos = (
-            df_fos.sort_values(by="Prioridad")
-            .drop_duplicates(subset=["FO"], keep="first")
-            .drop(columns=["Prioridad"])
-        )
+        df_fos["Prioridad"] = df_fos["Estado de la ruta"].map({"Vencida": 1, "Rechazada": 2, "Finalizada con Retraso": 3, "Vigente": 4}).fillna(5)
+        df_fos = df_fos.sort_values(by="Prioridad").drop_duplicates(subset=["FO"], keep="first").drop(columns=["Prioridad"])
 
     if totales["total_fo"] == 0 and not df_fos.empty:
         totales["integradas"] = len(df_fos)
-        totales["vencidas"] = len(
-            df_fos[df_fos["Estado de la ruta"] == "Vencida"]
-        )
-        totales["vigentes"] = len(
-            df_fos[df_fos["Estado de la ruta"] == "Vigente"]
-        )
-        totales["con_retraso"] = len(
-            df_fos[df_fos["Estado de la ruta"] == "Finalizada con Retraso"]
-        )
+        totales["vencidas"] = len(df_fos[df_fos["Estado de la ruta"] == "Vencida"])
+        totales["vigentes"] = len(df_fos[df_fos["Estado de la ruta"] == "Vigente"])
+        totales["con_retraso"] = len(df_fos[df_fos["Estado de la ruta"] == "Finalizada con Retraso"])
         totales["total_fo"] = totales["integradas"]
 
     return totales, df_fos, df_ranking
@@ -960,13 +861,8 @@ def procesar_drivin_excel(file_excel_drivin):
 
 def procesar_drivin_pdf(file_pdf_drivin):
     totales = {
-        "total_fo": 0,
-        "integradas": 0,
-        "a_tiempo": 0,
-        "con_retraso": 0,
-        "vigentes": 0,
-        "vencidas": 0,
-        "rechazadas": 0,
+        "total_fo": 0, "integradas": 0, "a_tiempo": 0, "con_retraso": 0,
+        "vigentes": 0, "vencidas": 0, "rechazadas": 0
     }
     lista_fos = []
 
@@ -980,12 +876,7 @@ def procesar_drivin_pdf(file_pdf_drivin):
 
     for i, line in enumerate(lineas):
         line_up = line.upper()
-        if (
-            "RUTAS QUE REQUIEREN" in line_up
-            or "RUTAS VENCIDAS" in line_up
-            or "FO VENCIDAS" in line_up
-            or ("VENCIDAS" in line_up and "A TIEMPO" not in line_up)
-        ):
+        if "RUTAS QUE REQUIEREN" in line_up or "RUTAS VENCIDAS" in line_up or "FO VENCIDAS" in line_up or ("VENCIDAS" in line_up and "A TIEMPO" not in line_up):
             seccion_actual = "Vencida"
         elif "FINALIZADAS CON RETRASO" in line_up:
             seccion_actual = "Finalizada con Retraso"
@@ -1007,18 +898,10 @@ def procesar_drivin_pdf(file_pdf_drivin):
             fechas = re.findall(r"(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", bloque_texto)
             inicio_plan = fechas[0] if len(fechas) > 0 else "-"
             fin_plan = fechas[1] if len(fechas) > 1 else "-"
-            fin_real = (
-                fechas[2]
-                if len(fechas) > 2 and estado_linea == "Finalizada con Retraso"
-                else "-"
-            )
+            fin_real = fechas[2] if len(fechas) > 2 and estado_linea == "Finalizada con Retraso" else "-"
 
             desfase_txt = "-"
-            m_desf = re.search(
-                r"\b(\d+\s*d[ií]as?\s*\d+\s*hrs?|\d+\s*hrs?|\+\d+h\s*\d+m)\b",
-                bloque_texto,
-                re.IGNORECASE,
-            )
+            m_desf = re.search(r"\b(\d+\s*d[ií]as?\s*\d+\s*hrs?|\d+\s*hrs?|\+\d+h\s*\d+m)\b", bloque_texto, re.IGNORECASE)
             if m_desf:
                 desfase_txt = m_desf.group(1)
 
@@ -1029,10 +912,7 @@ def procesar_drivin_pdf(file_pdf_drivin):
                 desfase_txt = calcular_desviacion_automatica(fin_plan, fin_real)
 
             resp_kcc = "-"
-            m_kcc = re.search(
-                r"\b(Danna\s+[A-Za-z\-]+|Nicol\s+[A-Za-z\s]+|Yheri\s+[A-Za-z\s]+|Carolina\s+[A-Za-z\s]+|Karina\s+[A-Za-z\s]+|Patricia\s+[A-Za-z\s]+|Elizabeth\s+[A-Za-z\s]+|Diego\s+[A-Za-z\s]+|Camila\s+[A-Za-z\s]+|Franco\s+[A-Za-z\s]+)\b",
-                bloque_texto,
-            )
+            m_kcc = re.search(r"\b(Danna\s+[A-Za-z\-]+|Nicol\s+[A-Za-z\s]+|Yheri\s+[A-Za-z\s]+|Carolina\s+[A-Za-z\s]+|Karina\s+[A-Za-z\s]+|Patricia\s+[A-Za-z\s]+|Elizabeth\s+[A-Za-z\s]+|Diego\s+[A-Za-z\s]+|Camila\s+[A-Za-z\s]+|Franco\s+[A-Za-z\s]+)\b", bloque_texto)
             if m_kcc:
                 resp_kcc = m_kcc.group(1)
 
@@ -1051,43 +931,14 @@ def procesar_drivin_pdf(file_pdf_drivin):
 
     df_fos = pd.DataFrame(lista_fos)
     if not df_fos.empty:
-        df_fos["Prioridad"] = (
-            df_fos["Estado de la ruta"]
-            .map({
-                "Vencida": 1,
-                "Rechazada": 2,
-                "Finalizada con Retraso": 3,
-                "Vigente": 4,
-            })
-            .fillna(5)
-        )
-        df_fos = (
-            df_fos.sort_values(by="Prioridad")
-            .drop_duplicates(subset=["FO"], keep="first")
-            .drop(columns=["Prioridad"])
-        )
+        df_fos["Prioridad"] = df_fos["Estado de la ruta"].map({"Vencida": 1, "Rechazada": 2, "Finalizada con Retraso": 3, "Vigente": 4}).fillna(5)
+        df_fos = df_fos.sort_values(by="Prioridad").drop_duplicates(subset=["FO"], keep="first").drop(columns=["Prioridad"])
 
     totales["integradas"] = len(df_fos)
-    totales["vencidas"] = (
-        len(df_fos[df_fos["Estado de la ruta"] == "Vencida"])
-        if not df_fos.empty
-        else 0
-    )
-    totales["vigentes"] = (
-        len(df_fos[df_fos["Estado de la ruta"] == "Vigente"])
-        if not df_fos.empty
-        else 0
-    )
-    totales["con_retraso"] = (
-        len(df_fos[df_fos["Estado de la ruta"] == "Finalizada con Retraso"])
-        if not df_fos.empty
-        else 0
-    )
-    totales["rechazadas"] = (
-        len(df_fos[df_fos["Estado de la ruta"] == "Rechazada"])
-        if not df_fos.empty
-        else 0
-    )
+    totales["vencidas"] = len(df_fos[df_fos["Estado de la ruta"] == "Vencida"]) if not df_fos.empty else 0
+    totales["vigentes"] = len(df_fos[df_fos["Estado de la ruta"] == "Vigente"]) if not df_fos.empty else 0
+    totales["con_retraso"] = len(df_fos[df_fos["Estado de la ruta"] == "Finalizada con Retraso"]) if not df_fos.empty else 0
+    totales["rechazadas"] = len(df_fos[df_fos["Estado de la ruta"] == "Rechazada"]) if not df_fos.empty else 0
     totales["total_fo"] = totales["integradas"]
 
     return totales, df_fos, pd.DataFrame()
@@ -1103,16 +954,8 @@ def ejecutar_cruce_completo(file_drivin, file_sae=None, file_smartsheet=None):
         totales_p["total_fo"] = len(df_fos_p) if not df_fos_p.empty else 650
         totales_p["integradas"] = totales_p["total_fo"]
 
-    df_sae_p = (
-        procesar_excel_sae(file_sae)
-        if file_sae is not None
-        else pd.DataFrame()
-    )
-    df_sm_p = (
-        procesar_smartsheet(file_smartsheet)
-        if file_smartsheet is not None
-        else pd.DataFrame()
-    )
+    df_sae_p = procesar_excel_sae(file_sae) if file_sae is not None else pd.DataFrame()
+    df_sm_p = procesar_smartsheet(file_smartsheet) if file_smartsheet is not None else pd.DataFrame()
 
     df_cruce_p = pd.DataFrame()
     if not df_fos_p.empty:
@@ -1121,38 +964,21 @@ def ejecutar_cruce_completo(file_drivin, file_sae=None, file_smartsheet=None):
         if not df_sae_p.empty:
             df_cruce_p = pd.merge(df_cruce_p, df_sae_p, on="FO", how="left")
         else:
-            (
-                df_cruce_p["SUCURSAL"],
-                df_cruce_p["ORIGEN"],
-                df_cruce_p["DESTINO"],
-                df_cruce_p["FOLIO"],
-            ) = (None, None, None, None)
+            df_cruce_p["SUCURSAL"], df_cruce_p["ORIGEN"], df_cruce_p["DESTINO"], df_cruce_p["FOLIO"] = None, None, None, None
 
         if not df_sm_p.empty:
             df_cruce_p = pd.merge(df_cruce_p, df_sm_p, on="FO", how="left")
             if "ORIGEN_SM" in df_cruce_p.columns:
-                df_cruce_p["ORIGEN"] = df_cruce_p["ORIGEN"].fillna(
-                    df_cruce_p["ORIGEN_SM"]
-                )
-                df_cruce_p["DESTINO"] = df_cruce_p["DESTINO"].fillna(
-                    df_cruce_p["DESTINO_SM"]
-                )
-                df_cruce_p = df_cruce_p.drop(
-                    columns=["ORIGEN_SM", "DESTINO_SM"]
-                )
+                df_cruce_p["ORIGEN"] = df_cruce_p["ORIGEN"].fillna(df_cruce_p["ORIGEN_SM"])
+                df_cruce_p["DESTINO"] = df_cruce_p["DESTINO"].fillna(df_cruce_p["DESTINO_SM"])
+                df_cruce_p = df_cruce_p.drop(columns=["ORIGEN_SM", "DESTINO_SM"])
 
-        df_cruce_p["SUCURSAL"] = df_cruce_p["SUCURSAL"].fillna(
-            "PENDIENTE EN GO TRUCK"
-        )
-        df_cruce_p["ORIGEN"] = df_cruce_p["ORIGEN"].fillna(
-            "PENDIENTE EN GO TRUCK"
-        )
-        df_cruce_p["DESTINO"] = df_cruce_p["DESTINO"].fillna(
-            "PENDIENTE EN GO TRUCK"
-        )
+        df_cruce_p["SUCURSAL"] = df_cruce_p["SUCURSAL"].fillna("PENDIENTE EN GO TRUCK")
+        df_cruce_p["ORIGEN"] = df_cruce_p["ORIGEN"].fillna("PENDIENTE EN GO TRUCK")
+        df_cruce_p["DESTINO"] = df_cruce_p["DESTINO"].fillna("PENDIENTE EN GO TRUCK")
         df_cruce_p["FOLIO"] = df_cruce_p["FOLIO"].apply(limpiar_fo_str)
 
-        # Integración de reportes normalizada por FO_KEY
+        # Integración de reportes desde Google Sheets / CSV
         df_reps_p = cargar_reportes_fo()
         if not df_reps_p.empty:
             df_cruce_p["FO_KEY"] = df_cruce_p["FO"].astype(str).apply(limpiar_fo_str)
@@ -1186,12 +1012,8 @@ def ejecutar_cruce_completo(file_drivin, file_sae=None, file_smartsheet=None):
                 on="FO_KEY",
                 how="left",
             )
-            df_cruce_p["Estado_Reporte"] = df_cruce_p["Estado_Reporte"].fillna(
-                "Sin Reporte"
-            )
-            df_cruce_p["Detalle_Reporte"] = df_cruce_p[
-                "Detalle_Reporte"
-            ].fillna("-")
+            df_cruce_p["Estado_Reporte"] = df_cruce_p["Estado_Reporte"].fillna("Sin Reporte")
+            df_cruce_p["Detalle_Reporte"] = df_cruce_p["Detalle_Reporte"].fillna("-")
             
             if "FO_KEY" in df_cruce_p.columns:
                 df_cruce_p = df_cruce_p.drop(columns=["FO_KEY"])
@@ -1200,22 +1022,10 @@ def ejecutar_cruce_completo(file_drivin, file_sae=None, file_smartsheet=None):
             df_cruce_p["Detalle_Reporte"] = "-"
 
         cols_order = [
-            "FO",
-            "Estado_Reporte",
-            "Fin plan",
-            "Fin real",
-            "Desviación",
-            "Conductor",
-            "Detalle_Reporte",
-            "SUCURSAL",
-            "RESPONSABLE",
-            "Inicio Planificado",
-            "Fin Planificado",
-            "Estado de la ruta",
-            "Evento",
-            "ORIGEN",
-            "DESTINO",
-            "FOLIO",
+            "FO", "Estado_Reporte", "Fin plan", "Fin real", "Desviación",
+            "Conductor", "Detalle_Reporte", "SUCURSAL", "RESPONSABLE",
+            "Inicio Planificado", "Fin Planificado", "Estado de la ruta",
+            "Evento", "ORIGEN", "DESTINO", "FOLIO"
         ]
         cols_exist = [c for c in cols_order if c in df_cruce_p.columns]
         df_cruce_p = df_cruce_p[cols_exist]
@@ -1223,7 +1033,7 @@ def ejecutar_cruce_completo(file_drivin, file_sae=None, file_smartsheet=None):
     return totales_p, df_cruce_p, df_rank_p
 
 
-# --- INICIALIZACIÓN AUTOMÁTICA EN CACHÉ ---
+# --- CARGA Y SINCRONIZACIÓN INICIAL DE MEMORIA ---
 cache_totales, cache_df_cruce, cache_df_ranking, ultima_fecha_act = cargar_cache_global()
 
 if (cache_df_cruce is None or cache_df_cruce.empty) and os.path.exists(DRIVIN_BASE_FILE):
@@ -1245,7 +1055,7 @@ if "df_cruce" not in st.session_state or st.session_state.df_cruce.empty:
     st.session_state.ultima_fecha_act = ultima_fecha_act
 
 
-# --- BARRA LATERAL (ADMINISTRADOR) ---
+# --- BARRA LATERAL (PANEL ADMINISTRATIVO) ---
 with st.sidebar:
     st.title(" Panel Drivin")
     st.caption("Operación Komatsu Cummins - SAE")
@@ -1256,53 +1066,75 @@ with st.sidebar:
             st.rerun()
         st.divider()
 
-    fecha_act_display = st.session_state.get(
-        "ultima_fecha_act", ultima_fecha_act
-    )
+    # Indicador de estado de la conexión a la base de datos de Google Sheets
+    if HAS_GSHEETS and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
+        st.success("🟢 **Google Sheets Conectado:** Las FO se guardan permanentemente en la nube.")
+    else:
+        st.warning("🔴 **Modo Offline/Local:** Para persitencia en la nube, configura Secrets en Streamlit Cloud.")
+
+    fecha_act_display = st.session_state.get("ultima_fecha_act", ultima_fecha_act)
     if fecha_act_display:
         st.info(f"🕒 **Última actualización local:**\n{fecha_act_display}")
 
-    if st.button("🔄 Actualizar / Recargar Sistema", use_container_width=True):
+    if st.button("🔄 Sincronizar con Google Sheets", use_container_width=True):
         reaplicar_cruce_con_reportes()
-        st.success("✅ Sistema recargado con reportes actualizados.")
+        st.success("✅ Sistema sincronizado correctamente.")
         st.rerun()
 
     st.divider()
 
-    # --- NUEVO MÓDULO: BOTÓN CIERRE DE MES Y RESET ---
+    # --- MÓDULO DE CIERRE DE MES ---
     st.subheader("🔒 Cierre de Mes (Cero / Reset)")
-    with st.expander("🚨 Formulario Cierre de Mes"):
-        st.warning("⚠️ Esta acción guardará un respaldo completo del mes y limpiará el sistema para iniciar el nuevo periodo.")
+    with st.expander("🚨 Ejecutar Cierre Mensual"):
+        st.warning("⚠️ Esta opción guardará un snapshot del periodo y limpiará los indicadores para el nuevo mes.")
         nombre_mes_in = st.text_input("Mes/Año a cerrar (Ej: Enero_2026):", key="txt_mes_cierre")
-        user_cierre_in = st.text_input("Usuario Responsable del Cierre:", key="txt_user_cierre")
+        user_cierre_in = st.text_input("Usuario Responsable:", key="txt_user_cierre")
         pass_cierre_in = st.text_input("Clave de Seguridad Autorizada:", type="password", key="pass_cierre")
 
         if st.button("🔥 EJECUTAR CIERRE DE MES", type="primary", use_container_width=True):
             if pass_cierre_in != CLAVE_AUTORIZADA_CIERRE:
                 st.error("🔑 Clave de seguridad incorrecta. Acción no autorizada.")
             elif not nombre_mes_in or not user_cierre_in:
-                st.warning("⚠️ Debes indicar el nombre del mes y el usuario responsable.")
+                st.warning("⚠️ Debes indicar el nombre del periodo y el usuario responsable.")
             else:
                 if ejecutar_cierre_de_mes(nombre_mes_in.strip(), user_cierre_in.strip()):
-                    st.success(f"🎉 Mes '{nombre_mes_in}' cerrado exitosamente. El sistema ha iniciado de 0.")
+                    st.success(f"🎉 Periodo '{nombre_mes_in}' cerrado exitosamente. El sistema ha iniciado de 0.")
                     st.rerun()
 
     st.divider()
 
-    st.subheader("⚙️ Panel Administrador")
+    # --- RESTAURACIÓN MANUAL DE COPIAS DE SEGURIDAD ---
+    st.subheader("📥 Cargar Respaldo Manual (CSV/Excel)")
+    with st.expander("📂 Importar Copia Externa"):
+        uploaded_recovery = st.file_uploader("Subir respaldo previo:", type=["csv", "xlsx"])
+        if st.button("🚀 Forzar Carga a Google Sheets", use_container_width=True):
+            if uploaded_recovery is not None:
+                try:
+                    df_rec = pd.read_csv(uploaded_recovery, dtype=str) if uploaded_recovery.name.endswith(".csv") else pd.read_excel(uploaded_recovery, dtype=str)
+                    df_rec["FO"] = df_rec["FO"].apply(limpiar_fo_str)
+                    guardar_dataframe_reportes(df_rec)
+                    reaplicar_cruce_con_reportes()
+                    st.success("✅ Respaldo procesado e importado exitosamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al importar el archivo: {e}")
+
+    st.divider()
+
+    st.subheader("⚙️ Parámetros de Operación")
     servicios_mensuales_admin = st.number_input(
         "📦 Total Servicios Mensuales Operativos:",
         min_value=1,
         value=650,
         step=10,
-        help="Indica el total estimado de servicios del mes para autocompletar en caso de faltar totales.",
+        help="Indica el total estimado de servicios del mes para calculos proporcionales.",
     )
 
-    # --- ADMINISTRACIÓN DE PROBLEMAS FO DINÁMICO ---
-    st.markdown("##### ⚙️ Configurar Opciones de Problemas FO")
+    # Configuración dinámica de opciones de problemas
+    st.markdown("##### ⚙️ Lista de Problemas FO")
     opciones_actuales_prob = cargar_opciones_problemas()
 
-    nueva_opcion_prob = st.text_input("Agregar nueva opción de problema:", key="txt_nuevo_prob")
+    nueva_opcion_prob = st.text_input("Agregar tipo de problema:", key="txt_nuevo_prob")
     if st.button("➕ Añadir Problema", use_container_width=True):
         txt_clean = nueva_opcion_prob.strip()
         if txt_clean and txt_clean not in opciones_actuales_prob:
@@ -1310,27 +1142,25 @@ with st.sidebar:
             guardar_opciones_problemas(opciones_actuales_prob)
             st.success(f"✅ Añadido: '{txt_clean}'")
             st.rerun()
-        elif txt_clean in opciones_actuales_prob:
-            st.warning("⚠️ Esta opción ya existe en la lista.")
 
     opcion_eliminar_prob = st.selectbox(
-        "Eliminar opción de problema:",
-        options=["-- Seleccionar para eliminar --"] + opciones_actuales_prob,
+        "Eliminar problema de lista:",
+        options=["-- Seleccionar --"] + opciones_actuales_prob,
         key="sb_elim_prob"
     )
     if st.button("🗑️ Eliminar Problema", use_container_width=True):
-        if opcion_eliminar_prob != "-- Seleccionar para eliminar --":
+        if opcion_eliminar_prob != "-- Seleccionar --":
             opciones_actuales_prob.remove(opcion_eliminar_prob)
             guardar_opciones_problemas(opciones_actuales_prob)
             st.success(f"🗑️ Eliminado: '{opcion_eliminar_prob}'")
             st.rerun()
 
-    # --- ADMINISTRACIÓN DE COORDINADORES KOMATSU / KCC DINÁMICO ---
+    # Configuración dinámica de coordinadores Komatsu
     st.divider()
-    st.markdown("##### ⚙️ Configurar Coordinadores Komatsu / KCC")
+    st.markdown("##### ⚙️ Lista de Coordinadores Komatsu / KCC")
     opciones_actuales_coord = cargar_opciones_coordinadores()
 
-    nuevo_coord = st.text_input("Agregar nuevo coordinador:", key="txt_nuevo_coord")
+    nuevo_coord = st.text_input("Agregar coordinador:", key="txt_nuevo_coord")
     if st.button("➕ Añadir Coordinador", use_container_width=True):
         txt_coord_clean = nuevo_coord.strip()
         if txt_coord_clean and txt_coord_clean not in opciones_actuales_coord:
@@ -1338,16 +1168,14 @@ with st.sidebar:
             guardar_opciones_coordinadores(opciones_actuales_coord)
             st.success(f"✅ Añadido: '{txt_coord_clean}'")
             st.rerun()
-        elif txt_coord_clean in opciones_actuales_coord:
-            st.warning("⚠️ Este coordinador ya existe en la lista.")
 
     coord_eliminar = st.selectbox(
-        "Eliminar coordinador existente:",
-        options=["-- Seleccionar para eliminar --"] + opciones_actuales_coord,
+        "Eliminar coordinador de lista:",
+        options=["-- Seleccionar --"] + opciones_actuales_coord,
         key="sb_elim_coord"
     )
     if st.button("🗑️ Eliminar Coordinador", use_container_width=True):
-        if coord_eliminar != "-- Seleccionar para eliminar --":
+        if coord_eliminar != "-- Seleccionar --":
             opciones_actuales_coord.remove(coord_eliminar)
             guardar_opciones_coordinadores(opciones_actuales_coord)
             st.success(f"🗑️ Eliminado: '{coord_eliminar}'")
@@ -1355,10 +1183,10 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("📂 Sobrescribir Planillas (Opcional)")
+    st.subheader("📂 Cargar Planillas Operativas")
     formato_drivin = st.radio(
-        "Tipo de Archivo Drivin a Cargar:",
-        ["📊 Excel Drivin (Nuevo Formato)", "📄 PDF Drivin (Formato Legacy)"],
+        "Tipo de Archivo Drivin:",
+        ["📊 Excel Drivin (.xlsx)", "📄 PDF Drivin (.pdf)"],
         index=0,
     )
 
@@ -1366,30 +1194,19 @@ with st.sidebar:
     uploaded_drivin_pdf = None
 
     if "Excel" in formato_drivin:
-        uploaded_drivin_excel = st.file_uploader(
-            "Subir Drivin Excel (.xlsx)", type=["xlsx", "xls"]
-        )
+        uploaded_drivin_excel = st.file_uploader("1. Drivin Excel (.xlsx)", type=["xlsx", "xls"])
     else:
-        uploaded_drivin_pdf = st.file_uploader(
-            "Subir Drivin PDF (.pdf)", type=["pdf"]
-        )
+        uploaded_drivin_pdf = st.file_uploader("1. Drivin PDF (.pdf)", type=["pdf"])
 
-    st.markdown("##### Tablas de Cruce Auxiliares")
-    uploaded_excel_sae = st.file_uploader(
-        "2. Planilla Excel SAE (EDP)", type=["xlsx", "xls"]
-    )
-    uploaded_smartsheet = st.file_uploader(
-        "3. Planilla SmartSheet", type=["xlsx", "xls"]
-    )
+    uploaded_excel_sae = st.file_uploader("2. Planilla SAE EDP (.xlsx)", type=["xlsx", "xls"])
+    uploaded_smartsheet = st.file_uploader("3. Planilla SmartSheet (.xlsx)", type=["xlsx", "xls"])
 
-    btn_procesar = st.button(
-        "🚀 Procesar Carga de Información", type="primary", use_container_width=True
-    )
+    btn_procesar = st.button("🚀 Procesar Carga de Información", type="primary", use_container_width=True)
 
     if btn_procesar:
         f_drivin_sel = uploaded_drivin_excel if "Excel" in formato_drivin else uploaded_drivin_pdf
         if f_drivin_sel is None and not os.path.exists(DRIVIN_BASE_FILE):
-            st.error("⚠️ Debes adjuntar el archivo de Drivin.")
+            st.error("⚠️ Debes adjuntar el archivo base de Drivin.")
         else:
             try:
                 f_d = f_drivin_sel if f_drivin_sel is not None else DRIVIN_BASE_FILE
@@ -1399,9 +1216,7 @@ with st.sidebar:
                 totales_p, df_cruce_p, df_rank_p = ejecutar_cruce_completo(f_d, f_sae, f_sm)
 
                 if totales_p["total_fo"] == 0 or totales_p["total_fo"] < len(df_cruce_p):
-                    totales_p["total_fo"] = (
-                        len(df_cruce_p) if not df_cruce_p.empty else servicios_mensuales_admin
-                    )
+                    totales_p["total_fo"] = len(df_cruce_p) if not df_cruce_p.empty else servicios_mensuales_admin
                     totales_p["integradas"] = totales_p["total_fo"]
 
                 guardar_cache_global(totales_p, df_cruce_p, df_rank_p)
@@ -1409,14 +1224,13 @@ with st.sidebar:
                 st.session_state.totales = totales_p
                 st.session_state.df_cruce = df_cruce_p
                 st.session_state.df_ranking = df_rank_p
-                nueva_fecha_txt = datetime.now().strftime("%d/%m/%Y a las %H:%M hrs")
-                st.session_state.ultima_fecha_act = nueva_fecha_txt
+                st.session_state.ultima_fecha_act = datetime.now().strftime("%d/%m/%Y a las %H:%M hrs")
                 st.rerun()
             except Exception as e:
                 st.error(f"Error al procesar la información: {e}")
 
 
-# --- ENCABEZADO Y KPIS PRINCIPALES ---
+# --- ENCABEZADO Y KPIS PRINCIPALES DE LA PÁGINA ---
 st.title("🚚 Dashboard Operativo Drivin")
 
 fecha_encabezado = st.session_state.get("ultima_fecha_act", ultima_fecha_act)
@@ -1439,9 +1253,7 @@ with col_m2:
         if not df_hist.empty:
             fechas_disponibles = [str(f) for f in df_hist["Fecha_Registro"].tolist()]
             fechas_disponibles.insert(0, "📅 Carga Actual Local")
-            fecha_consultada = st.selectbox(
-                "🔍 Seleccionar Día:", options=fechas_disponibles
-            )
+            fecha_consultada = st.selectbox("🔍 Seleccionar Día:", options=fechas_disponibles)
         else:
             fecha_consultada = "📅 Carga Actual Local"
     else:
@@ -1451,7 +1263,7 @@ with col_m2:
 df_cruce = st.session_state.get("df_cruce", pd.DataFrame())
 df_ranking = st.session_state.get("df_ranking", pd.DataFrame())
 
-# CALCULOS DE KPIs
+# CALCULOS DE KPIS
 if tipo_vista == "Mes Completo Acumulado" and not df_hist.empty:
     val_tot = int(df_hist["FO_Totales"].sum())
     val_int = int(df_hist["Integradas"].sum())
@@ -1466,9 +1278,7 @@ if tipo_vista == "Mes Completo Acumulado" and not df_hist.empty:
     pct_at = (val_at / eval_tot * 100) if eval_tot > 0 else 0.0
     pct_v = (val_ven / val_int * 100) if val_int > 0 else 0.0
 elif fecha_consultada != "📅 Carga Actual Local" and not df_hist.empty:
-    fila_dia = df_hist[
-        df_hist["Fecha_Registro"].astype(str) == fecha_consultada
-    ].iloc[-1]
+    fila_dia = df_hist[df_hist["Fecha_Registro"].astype(str) == fecha_consultada].iloc[-1]
     val_tot = int(fila_dia["FO_Totales"])
     val_int = int(fila_dia["Integradas"])
     val_at = int(fila_dia["A_Tiempo"])
@@ -1507,84 +1317,30 @@ if val_int > 0:
     st.markdown("##### 📌 Indicadores Clave del Servicio")
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        st.markdown(
-            f'<div class="kpi-card kpi-info"><div class="kpi-title">FO'
-            f' Integradas</div><div class="kpi-value">{val_int}</div><div'
-            ' class="kpi-sub" style="color: #3498db;">Total evaluables:'
-            f' {val_tot}</div></div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="kpi-card kpi-info"><div class="kpi-title">FO Integradas</div><div class="kpi-value">{val_int}</div><div class="kpi-sub" style="color: #3498db;">Total evaluables: {val_tot}</div></div>', unsafe_allow_html=True)
     with c2:
         at_color = "#2ecc71" if pct_at >= 90 else "#e74c3c"
-        st.markdown(
-            '<div class="kpi-card'
-            f' {"kpi-success" if pct_at >= 90 else "kpi-danger"}"><div'
-            ' class="kpi-title">Finalizadas a Tiempo</div><div'
-            f' class="kpi-value">{pct_at:.1f}%</div><div class="kpi-sub"'
-            f' style="color: {at_color};">{val_at} FO | Meta >= 90%</div></div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="kpi-card {"kpi-success" if pct_at >= 90 else "kpi-danger"}"><div class="kpi-title">Finalizadas a Tiempo</div><div class="kpi-value">{pct_at:.1f}%</div><div class="kpi-sub" style="color: {at_color};">{val_at} FO | Meta >= 90%</div></div>', unsafe_allow_html=True)
     with c3:
-        st.markdown(
-            '<div class="kpi-card kpi-warning"><div class="kpi-title">Con'
-            ' Retraso</div><div'
-            f' class="kpi-value">{(val_ret/val_int*100):.1f}%</div><div'
-            ' class="kpi-sub" style="color: #e67e22;">'
-            f"{val_ret} FO entregadas tarde</div></div>",
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="kpi-card kpi-warning"><div class="kpi-title">Con Retraso</div><div class="kpi-value">{(val_ret/val_int*100):.1f}%</div><div class="kpi-sub" style="color: #e67e22;">{val_ret} FO entregadas tarde</div></div>', unsafe_allow_html=True)
     with c4:
         v_color = "#2ecc71" if pct_v <= 5 else "#e74c3c"
-        st.markdown(
-            '<div class="kpi-card'
-            f' {"kpi-success" if pct_v <= 5 else "kpi-danger"}"><div'
-            ' class="kpi-title">FO Vencidas</div><div'
-            f' class="kpi-value">{pct_v:.1f}%</div><div class="kpi-sub"'
-            f' style="color: {v_color};">{val_ven} FO | Límite <= 5%</div></div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="kpi-card {"kpi-success" if pct_v <= 5 else "kpi-danger"}"><div class="kpi-title">FO Vencidas</div><div class="kpi-value">{pct_v:.1f}%</div><div class="kpi-sub" style="color: {v_color};">{val_ven} FO | Límite <= 5%</div></div>', unsafe_allow_html=True)
     with c5:
-        st.markdown(
-            '<div class="kpi-card kpi-info"><div class="kpi-title">FO'
-            f' Vigentes</div><div class="kpi-value">{val_vig}</div><div'
-            ' class="kpi-sub" style="color: #3498db;">En proceso dentro del'
-            " plazo</div></div>",
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="kpi-card kpi-info"><div class="kpi-title">FO Vigentes</div><div class="kpi-value">{val_vig}</div><div class="kpi-sub" style="color: #3498db;">En proceso dentro del plazo</div></div>', unsafe_allow_html=True)
 
     st.markdown("##### 🚨 Análisis de Reportes de Inconsistencias y Eventos")
     cr1, cr2, cr3 = st.columns(3)
     with cr1:
-        st.markdown(
-            '<div class="kpi-card kpi-purple"><div class="kpi-title">FO'
-            ' Reportadas con Problema</div><div'
-            f' class="kpi-value">{pct_rep_total:.1f}%</div><div'
-            ' class="kpi-sub" style="color: #8e44ad;">'
-            f"{val_rep} de {val_int} FO integradas</div></div>",
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="kpi-card kpi-purple"><div class="kpi-title">FO Reportadas con Problema</div><div class="kpi-value">{pct_rep_total:.1f}%</div><div class="kpi-sub" style="color: #8e44ad;">{val_rep} de {val_int} FO integradas</div></div>', unsafe_allow_html=True)
     with cr2:
-        st.markdown(
-            '<div class="kpi-card kpi-warning"><div class="kpi-title">Retrasos'
-            ' Reportados / Justificados</div><div'
-            f' class="kpi-value">{pct_ret_justificados:.1f}%</div><div'
-            ' class="kpi-sub" style="color: #d35400;">'
-            f"{val_ret_rep} de {val_ret} retrasos tienen reporte</div></div>",
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="kpi-card kpi-warning"><div class="kpi-title">Retrasos Reportados / Justificados</div><div class="kpi-value">{pct_ret_justificados:.1f}%</div><div class="kpi-sub" style="color: #d35400;">{val_ret_rep} de {val_ret} retrasos tienen reporte</div></div>', unsafe_allow_html=True)
     with cr3:
-        st.markdown(
-            '<div class="kpi-card kpi-info"><div class="kpi-title">FO con Evento'
-            ' Registrado</div><div'
-            f' class="kpi-value">{pct_evt_total:.1f}%</div><div'
-            ' class="kpi-sub" style="color: #2980b9;">'
-            f"{val_evt} de {val_int} FO con evento anotado</div></div>",
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="kpi-card kpi-info"><div class="kpi-title">FO con Evento Registrado</div><div class="kpi-value">{pct_evt_total:.1f}%</div><div class="kpi-sub" style="color: #2980b9;">{val_evt} de {val_int} FO con evento anotado</div></div>', unsafe_allow_html=True)
 
 st.divider()
 
-# --- VISTA 1: MENÚ PRINCIPAL TIPO PORTAL TARJETAS (ORDENADO) ---
+# --- VISTA 1: PORTAL DE NAVEGACIÓN Y TARJETAS ---
 if st.session_state.modulo_activo == "INICIO":
     st.markdown("### 🗂️ Selecciona un Módulo para Visualizar")
     st.caption("Haz clic en cualquier tarjeta para desplegar el módulo a pantalla completa.")
@@ -1630,7 +1386,7 @@ if st.session_state.modulo_activo == "INICIO":
             st.session_state.modulo_activo = "HISTORICO"
             st.rerun()
 
-# --- VISTA 2: DESPLIEGUE A PANTALLA COMPLETA DEL MÓDULO CON BARRA SUPERIOR DE ACCESO RÁPIDO ---
+# --- VISTA 2: NAVEGACIÓN DIRECTA ENTRE MÓDULOS ---
 else:
     col_btn_back, col_nav_bar = st.columns([1, 4])
     with col_btn_back:
@@ -1724,11 +1480,11 @@ else:
                 type="primary",
             )
         else:
-            st.info("👈 Carga y procesa archivos desde el menú lateral para ver la tabla.")
+            st.info("👈 Carga y procesa archivos desde la barra lateral para desplegar los datos.")
 
     # MÓDULO 2: RANGO DE FECHAS
     elif st.session_state.modulo_activo == "RANGO_FECHAS":
-        st.subheader("📅 Filtrado de FO por Rango de Fechas (Basado en Servicios Mensuales)")
+        st.subheader("📅 Filtrado por Rango de Fechas Planificadas")
         if not df_cruce.empty:
             df_rf = df_cruce.copy()
 
@@ -1804,7 +1560,7 @@ else:
 
                     st.dataframe(df_filtrado_desviaciones.style.map(color_filas_estado, subset=["Estado de la ruta"]), use_container_width=True)
             else:
-                st.warning("No se pudieron interpretar fechas válidas.")
+                st.warning("No se pudieron interpretar fechas válidas en la tabla.")
 
     # MÓDULO 3: METAS Y GRÁFICOS
     elif st.session_state.modulo_activo == "METAS":
@@ -1823,8 +1579,6 @@ else:
             if tot_f > 0:
                 cnt_at = len(df_m_filtrado[df_m_filtrado["Estado de la ruta"].isin(["Finalizada a tiempo", "A Tiempo"])])
                 cnt_ret = len(df_m_filtrado[df_m_filtrado["Estado de la ruta"] == "Finalizada con Retraso"])
-                cnt_ven = len(df_m_filtrado[df_m_filtrado["Estado de la ruta"] == "Vencida"])
-                cnt_vig = len(df_m_filtrado[df_m_filtrado["Estado de la ruta"] == "Vigente"])
 
                 calc_tot = val_tot if (len(suc_seleccionadas) == len(suc_disponibles) and len(resp_seleccionados) == len(resp_seleccionados)) else tot_f
                 calc_at = val_at if (len(suc_seleccionadas) == len(suc_disponibles) and len(resp_seleccionados) == len(resp_seleccionados)) else cnt_at
@@ -1847,7 +1601,7 @@ else:
         if df_ranking is not None and not df_ranking.empty:
             st.dataframe(df_ranking, use_container_width=True, height=500)
         else:
-            st.info("Sin datos de ranking actualmente.")
+            st.info("Sin datos de ranking actualmente en la planilla cargada.")
 
     # MÓDULO 5: SUCURSALES
     elif st.session_state.modulo_activo == "SUCURSALES":
@@ -1903,10 +1657,12 @@ else:
             df_solo_retraso = df_cruce[df_cruce["Estado de la ruta"] == "Finalizada con Retraso"].copy()
             if not df_solo_retraso.empty:
                 st.dataframe(df_solo_retraso.style.map(color_filas_estado, subset=["Estado_Reporte"]), use_container_width=True, height=500)
+            else:
+                st.info("No hay rutas registradas con retraso en la carga actual.")
 
-    # MÓDULO 7: FORMULARIO DE REPORTES
+    # MÓDULO 7: FORMULARIO DE REPORTES (SINCRONIZADO CON GOOGLE SHEETS)
     elif st.session_state.modulo_activo == "REPORTAR":
-        st.subheader("📝 Formulario de Registro y Edición de Reportes FO")
+        st.subheader("📝 Registro y Edición de Reportes FO (Sincronizado con Google Sheets)")
         df_reps_actuales = cargar_reportes_fo()
         opciones_modo = ["➕ Nuevo Reporte"]
         if not df_reps_actuales.empty:
@@ -1930,10 +1686,10 @@ else:
                     arch_in = st.file_uploader("Adjuntar Respaldo (Imagen/PDF):", type=["png", "jpg", "jpeg", "pdf", "msg", "eml", "txt"])
 
                 obs_in = st.text_area("Observaciones / Justificación:")
-                if st.form_submit_button("📩 Guardar Nuevo Reporte", type="primary", use_container_width=True):
+                if st.form_submit_button("📩 Guardar en Google Sheets", type="primary", use_container_width=True):
                     if fo_in and resp_in:
                         guardar_reporte_fo(fo_in, suc_in, prob_in, coord_sel, resp_in, obs_in, arch_in)
-                        st.success("✅ Reporte guardado e integrado correctamente.")
+                        st.success("✅ Reporte guardado y sincronizado exitosamente.")
                         st.rerun()
 
         else:
@@ -1973,7 +1729,7 @@ else:
 
                 if btn_eliminar:
                     if eliminar_reporte_fo(fo_a_editar_limpia):
-                        st.success("🗑️ Reporte eliminado.")
+                        st.success("🗑️ Reporte eliminado de Google Sheets.")
                         st.rerun()
 
     # MÓDULO 8: MANDANTE
@@ -2043,13 +1799,13 @@ else:
                         with open(path_img_local, "rb") as f_down:
                             st.download_button(label=f"📥 Descargar Archivo Respaldo ({ext_ver.upper()})", data=f_down, file_name=archivo_nombre)
                 else:
-                    st.warning("⚠️ No se encontró el archivo de imagen en la carpeta local.")
+                    st.warning("⚠️ No se encontró la imagen en la carpeta local de capturas.")
             else:
                 st.info("ℹ️ Este reporte no adjuntó ningún archivo de respaldo.")
         else:
-            st.info("Aún no hay reportes de FO registrados para mostrar al mandante.")
+            st.info("Aún no hay reportes de FO registrados en la hoja de Google Sheets para mostrar al mandante.")
 
-    # MÓDULO 9: HISTÓRICO Y HISTÓRICO DE CIERRES
+    # MÓDULO 9: HISTÓRICO Y CIERRES
     elif st.session_state.modulo_activo == "HISTORICO":
         st.subheader("📈 Evolución Histórica de Cumplimiento")
         df_hist = cargar_historico()
