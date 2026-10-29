@@ -615,20 +615,32 @@ def reaplicar_cruce_con_reportes():
         guardar_cache_global(st.session_state.totales, df_cruce_p, st.session_state.df_ranking)
 
 
-# --- EXPORTACIÓN A UN SOLO EXCEL MULTI-PESTAÑA ---
+# --- EXPORTACIÓN A UN SOLO EXCEL CON RESULTADOS ---
 def generar_excel_unificado_completo(df_cruce):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         # Pestaña 1: Vencidas y Vigentes (Base Unificada Completa)
         df_cruce.to_excel(writer, sheet_name="Vencidas_y_Vigentes", index=False)
         
-        # Pestaña 2: Finalizadas con Retraso (Filtrado)
-        df_retrasos = df_cruce[df_cruce["Estado de la ruta"] == "Finalizada con Retraso"]
+        # Pestaña 2: RESULTADOS (Tabla cruzada por sucursal)
+        if not df_cruce.empty and "SUCURSAL" in df_cruce.columns and "Estado de la ruta" in df_cruce.columns:
+            df_cruce_clean = df_cruce.copy()
+            df_cruce_clean["SUCURSAL_CLEAN"] = df_cruce_clean["SUCURSAL"].astype(str).str.strip().str.title()
+            tabla_res = pd.crosstab(
+                df_cruce_clean["SUCURSAL_CLEAN"],
+                df_cruce_clean["Estado de la ruta"],
+                margins=True,
+                margins_name="Total general"
+            ).reset_index()
+            tabla_res.to_excel(writer, sheet_name="RESULTADOS", index=False)
+
+        # Pestaña 3: Finalizadas con Retraso (Filtrado)
+        df_retrasos = df_cruce[df_cruce["Estado de la ruta"].str.contains("Retraso", na=False)]
         if not df_retrasos.empty:
             df_retrasos.to_excel(writer, sheet_name="Finalizadas_Con_Retraso", index=False)
         else:
             pd.DataFrame(columns=df_cruce.columns).to_excel(writer, sheet_name="Finalizadas_Con_Retraso", index=False)
-            
+
     return output.getvalue()
 
 
@@ -641,11 +653,11 @@ def generar_excel_solo_tabla(df_tabla, nombre_hoja="Datos"):
 
 def color_filas_estado(val):
     val_str = str(val)
-    if val_str == "Vencida":
+    if "Vencida" in val_str and "REPORTADA" not in val_str:
         return "background-color: #fbe9e7; color: #c62828; font-weight: bold;"
     elif val_str == "Vigente":
         return "background-color: #ffffff; color: #212529;"
-    elif val_str == "Finalizada con Retraso":
+    elif "Retraso" in val_str and "REPORTADA" not in val_str:
         return "background-color: #fff3e0; color: #ef6c00; font-weight: bold;"
     elif val_str == "Rechazada":
         return "background-color: #e1bee7; color: #4a148c; font-weight: bold;"
@@ -717,15 +729,19 @@ def procesar_drivin_excel(file_excel_drivin):
 
             lista_fos.append({
                 "FO": limpiar_fo_str(row["FO"]),
-                "RESPONSABLE": str(row.get("Responsable KCC", "-")),
+                "RESPONSABLE": str(row.get("Responsable KCC", row.get("RESPONSABLE", "-"))),
                 "Fin plan": fin_p,
                 "Fin real": fin_r,
                 "Inicio Planificado": inicio_p,
                 "Fin Planificado": fin_p,
                 "Conductor": str(row.get("Conductor", "-")),
-                "Estado de la ruta": str(row.get("Estado", "Vigente")).strip().capitalize(),
+                "Estado de la ruta": str(row.get("Estado de la ruta", row.get("Estado", "Vigente"))).strip(),
                 "Evento": "-" if pd.isna(row.get("Evento")) else str(row.get("Evento")),
-                "Desviación": "-",
+                "Desviación": str(row.get("Desviación", "-")),
+                "SUCURSAL": str(row.get("SUCURSAL", "PENDIENTE EN GO TRUCK")).strip().title(),
+                "ORIGEN": str(row.get("ORIGEN", "PENDIENTE EN GO TRUCK")),
+                "DESTINO": str(row.get("DESTINO", "PENDIENTE EN GO TRUCK")),
+                "FOLIO": limpiar_fo_str(row.get("FOLIO", "")),
             })
 
     sheet_ret = None
@@ -734,7 +750,7 @@ def procesar_drivin_excel(file_excel_drivin):
             sheet_ret = sheet_names_map[k]
             break
 
-    if sheet_ret:
+    if sheet_ret and not sheet_vv:
         df_ret = pd.read_excel(xls, sheet_name=sheet_ret)
         df_ret = df_ret.dropna(subset=["FO"])
 
@@ -757,15 +773,19 @@ def procesar_drivin_excel(file_excel_drivin):
 
             lista_fos.append({
                 "FO": limpiar_fo_str(row["FO"]),
-                "RESPONSABLE": str(row.get("Responsable KCC", "-")),
+                "RESPONSABLE": str(row.get("Responsable KCC", row.get("RESPONSABLE", "-"))),
                 "Fin plan": fin_p,
                 "Fin real": fin_r,
                 "Inicio Planificado": inicio_p,
                 "Fin Planificado": fin_p,
                 "Conductor": str(row.get("Conductor", "-")),
-                "Estado de la ruta": "Finalizada con Retraso",
+                "Estado de la ruta": str(row.get("Estado de la ruta", "Finalizada con Retraso")).strip(),
                 "Evento": "-" if pd.isna(row.get("Evento")) else str(row.get("Evento")),
                 "Desviación": desviacion_val,
+                "SUCURSAL": str(row.get("SUCURSAL", "PENDIENTE EN GO TRUCK")).strip().title(),
+                "ORIGEN": str(row.get("ORIGEN", "PENDIENTE EN GO TRUCK")),
+                "DESTINO": str(row.get("DESTINO", "PENDIENTE EN GO TRUCK")),
+                "FOLIO": limpiar_fo_str(row.get("FOLIO", "")),
             })
 
     sheet_rank = sheet_names_map.get("ranking")
@@ -794,9 +814,9 @@ def procesar_drivin_excel(file_excel_drivin):
 
     if totales["total_fo"] == 0 and not df_fos.empty:
         totales["integradas"] = len(df_fos)
-        totales["vencidas"] = len(df_fos[df_fos["Estado de la ruta"] == "Vencida"])
+        totales["vencidas"] = len(df_fos[df_fos["Estado de la ruta"].str.contains("Vencida", na=False)])
         totales["vigentes"] = len(df_fos[df_fos["Estado de la ruta"] == "Vigente"])
-        totales["con_retraso"] = len(df_fos[df_fos["Estado de la ruta"] == "Finalizada con Retraso"])
+        totales["con_retraso"] = len(df_fos[df_fos["Estado de la ruta"].str.contains("Retraso", na=False)])
         totales["total_fo"] = totales["integradas"]
 
     return totales, df_fos, df_ranking
@@ -841,7 +861,7 @@ def procesar_drivin_pdf(file_pdf_drivin):
             fechas = re.findall(r"(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", bloque_texto)
             inicio_plan = fechas[0] if len(fechas) > 0 else "-"
             fin_plan = fechas[1] if len(fechas) > 1 else "-"
-            fin_real = fechas[2] if len(fechas) > 2 and estado_linea == "Finalizada con Retraso" else "-"
+            fin_real = fechas[2] if len(fechas) > 2 and "Retraso" in estado_linea else "-"
 
             desfase_txt = "-"
             m_desf = re.search(r"\b(\d+\s*d[ií]as?\s*\d+\s*hrs?|\d+\s*hrs?|\+\d+h\s*\d+m)\b", bloque_texto, re.IGNORECASE)
@@ -870,6 +890,10 @@ def procesar_drivin_pdf(file_pdf_drivin):
                 "Estado de la ruta": estado_linea,
                 "Evento": "-",
                 "Desviación": desfase_txt,
+                "SUCURSAL": "PENDIENTE EN GO TRUCK",
+                "ORIGEN": "PENDIENTE EN GO TRUCK",
+                "DESTINO": "PENDIENTE EN GO TRUCK",
+                "FOLIO": "",
             })
 
     df_fos = pd.DataFrame(lista_fos)
@@ -878,9 +902,9 @@ def procesar_drivin_pdf(file_pdf_drivin):
         df_fos = df_fos.sort_values(by="Prioridad").drop_duplicates(subset=["FO"], keep="first").drop(columns=["Prioridad"])
 
     totales["integradas"] = len(df_fos)
-    totales["vencidas"] = len(df_fos[df_fos["Estado de la ruta"] == "Vencida"]) if not df_fos.empty else 0
+    totales["vencidas"] = len(df_fos[df_fos["Estado de la ruta"].str.contains("Vencida", na=False)]) if not df_fos.empty else 0
     totales["vigentes"] = len(df_fos[df_fos["Estado de la ruta"] == "Vigente"]) if not df_fos.empty else 0
-    totales["con_retraso"] = len(df_fos[df_fos["Estado de la ruta"] == "Finalizada con Retraso"]) if not df_fos.empty else 0
+    totales["con_retraso"] = len(df_fos[df_fos["Estado de la ruta"].str.contains("Retraso", na=False)]) if not df_fos.empty else 0
     totales["rechazadas"] = len(df_fos[df_fos["Estado de la ruta"] == "Rechazada"]) if not df_fos.empty else 0
     totales["total_fo"] = totales["integradas"]
 
@@ -905,10 +929,8 @@ def ejecutar_cruce_completo(file_drivin, file_sae=None, file_smartsheet=None):
         df_cruce_p = df_fos_p.copy()
 
         if not df_sae_p.empty:
-            df_cruce_p = pd.merge(df_cruce_p, df_sae_p, on="FO", how="left")
-        else:
-            df_cruce_p["SUCURSAL"], df_cruce_p["ORIGEN"], df_cruce_p["DESTINO"], df_cruce_p["FOLIO"] = None, None, None, None
-
+            df_cruce_p = pd.merge(df_cruce_p, df_sae_p, on="FO", how="left", suffixes=('', '_sae'))
+        
         if not df_sm_p.empty:
             df_cruce_p = pd.merge(df_cruce_p, df_sm_p, on="FO", how="left")
             if "ORIGEN_SM" in df_cruce_p.columns:
@@ -916,7 +938,7 @@ def ejecutar_cruce_completo(file_drivin, file_sae=None, file_smartsheet=None):
                 df_cruce_p["DESTINO"] = df_cruce_p["DESTINO"].fillna(df_cruce_p["DESTINO_SM"])
                 df_cruce_p = df_cruce_p.drop(columns=["ORIGEN_SM", "DESTINO_SM"])
 
-        df_cruce_p["SUCURSAL"] = df_cruce_p["SUCURSAL"].fillna("PENDIENTE EN GO TRUCK")
+        df_cruce_p["SUCURSAL"] = df_cruce_p["SUCURSAL"].fillna("PENDIENTE EN GO TRUCK").astype(str).str.strip().str.title()
         df_cruce_p["ORIGEN"] = df_cruce_p["ORIGEN"].fillna("PENDIENTE EN GO TRUCK")
         df_cruce_p["DESTINO"] = df_cruce_p["DESTINO"].fillna("PENDIENTE EN GO TRUCK")
         df_cruce_p["FOLIO"] = df_cruce_p["FOLIO"].apply(limpiar_fo_str)
@@ -1038,7 +1060,7 @@ with st.sidebar:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary",
             use_container_width=True,
-            help="Descarga un solo archivo Excel con 2 pestañas: Vencidas/Vigentes y Finalizadas con Retraso con toda la información de origen, destino, sucursal y folios."
+            help="Descarga un solo archivo Excel con 3 pestañas: Vencidas/Vigentes, RESULTADOS y Finalizadas con Retraso."
         )
         st.divider()
 
@@ -1069,7 +1091,7 @@ with st.sidebar:
         if st.button("🚀 Forzar Carga a Google Sheets", use_container_width=True):
             if uploaded_recovery is not None:
                 try:
-                    df_rec = pd.read_csv(uploaded_recovery, dtype=str) if uploaded_recovery.name.endswith(".csv") else pd.read_excel(uploaded_recovery, dtype=str)
+                    df_rec = pd.read_csv(uploaded_recovery, dtype=str) if uploaded_recovery.name.endswith(".csv") else pd.read_excel(uploaded_recovery, sheet_name=0, dtype=str)
                     df_rec["FO"] = df_rec["FO"].apply(limpiar_fo_str)
                     guardar_dataframe_reportes(df_rec)
                     reaplicar_cruce_con_reportes()
@@ -1252,14 +1274,14 @@ else:
     val_tot = st.session_state.totales.get("total_fo", 0) if st.session_state.get("totales") else len(df_cruce)
     val_int = st.session_state.totales.get("integradas", len(df_cruce)) if st.session_state.get("totales") else len(df_cruce)
     val_at = st.session_state.totales.get("a_tiempo", 0) if st.session_state.get("totales") else 0
-    val_ret = len(df_cruce[df_cruce["Estado de la ruta"] == "Finalizada con Retraso"]) if not df_cruce.empty and "Estado de la ruta" in df_cruce.columns else 0
+    val_ret = len(df_cruce[df_cruce["Estado de la ruta"].str.contains("Retraso", na=False)]) if not df_cruce.empty and "Estado de la ruta" in df_cruce.columns else 0
     val_vig = len(df_cruce[df_cruce["Estado de la ruta"] == "Vigente"]) if not df_cruce.empty and "Estado de la ruta" in df_cruce.columns else 0
-    val_ven = len(df_cruce[df_cruce["Estado de la ruta"] == "Vencida"]) if not df_cruce.empty and "Estado de la ruta" in df_cruce.columns else 0
+    val_ven = len(df_cruce[df_cruce["Estado de la ruta"].str.contains("Vencida", na=False)]) if not df_cruce.empty and "Estado de la ruta" in df_cruce.columns else 0
     val_rep = len(df_cruce[df_cruce["Estado_Reporte"] == "🚨 REPORTADA"]) if not df_cruce.empty and "Estado_Reporte" in df_cruce.columns else 0
     val_evt = len(df_cruce[df_cruce["Evento"].notna() & (df_cruce["Evento"].astype(str).str.strip() != "-") & (df_cruce["Evento"].astype(str).str.strip() != "")]) if not df_cruce.empty and "Evento" in df_cruce.columns else 0
     
     if not df_cruce.empty and "Estado de la ruta" in df_cruce.columns and "Estado_Reporte" in df_cruce.columns:
-        val_ret_rep = len(df_cruce[(df_cruce["Estado de la ruta"] == "Finalizada con Retraso") & (df_cruce["Estado_Reporte"] == "🚨 REPORTADA")])
+        val_ret_rep = len(df_cruce[(df_cruce["Estado de la ruta"].str.contains("Retraso", na=False)) & (df_cruce["Estado_Reporte"] == "🚨 REPORTADA")])
     else:
         val_ret_rep = 0
 
@@ -1458,8 +1480,8 @@ else:
 
                     df_filtrado_desviaciones = df_rf[(df_rf["Fecha_Final_Eval"] >= f_desde) & (df_rf["Fecha_Final_Eval"] <= f_hasta)]
 
-                    ret_r = len(df_filtrado_desviaciones[df_filtrado_desviaciones["Estado de la ruta"] == "Finalizada con Retraso"])
-                    ven_r = len(df_filtrado_desviaciones[df_filtrado_desviaciones["Estado de la ruta"] == "Vencida"])
+                    ret_r = len(df_filtrado_desviaciones[df_filtrado_desviaciones["Estado de la ruta"].str.contains("Retraso", na=False)])
+                    ven_r = len(df_filtrado_desviaciones[df_filtrado_desviaciones["Estado de la ruta"].str.contains("Vencida", na=False)])
                     vig_r = len(df_filtrado_desviaciones[df_filtrado_desviaciones["Estado de la ruta"] == "Vigente"])
                     rec_r = len(df_filtrado_desviaciones[df_filtrado_desviaciones["Estado de la ruta"] == "Rechazada"])
 
@@ -1513,7 +1535,7 @@ else:
             tot_f = len(df_m_filtrado)
             if tot_f > 0:
                 cnt_at = len(df_m_filtrado[df_m_filtrado["Estado de la ruta"].isin(["Finalizada a tiempo", "A Tiempo"])])
-                cnt_ret = len(df_m_filtrado[df_m_filtrado["Estado de la ruta"] == "Finalizada con Retraso"])
+                cnt_ret = len(df_m_filtrado[df_m_filtrado["Estado de la ruta"].str.contains("Retraso", na=False)])
 
                 calc_tot = val_tot if (len(suc_seleccionadas) == len(suc_disponibles) and len(resp_seleccionados) == len(resp_seleccionados)) else tot_f
                 calc_at = val_at if (len(suc_seleccionadas) == len(suc_disponibles) and len(resp_seleccionados) == len(resp_seleccionados)) else cnt_at
@@ -1538,14 +1560,14 @@ else:
         else:
             st.info("Sin datos de ranking actualmente en la planilla cargada.")
 
-    # MÓDULO 5: SUCURSALES
+    # MÓDULO 5: SUCURSALES (MATRIZ Y TABLA RESULTADOS MATRIMONIADA CON EL EXCEL MANUAL)
     elif st.session_state.modulo_activo == "SUCURSALES":
-        st.subheader("🏢 Porcentajes de Cumplimiento por Sucursal (% A Tiempo vs % Vencidas)")
+        st.subheader("🏢 Tabla de RESULTADOS por Sucursal y Estado de la Ruta")
         if not df_cruce.empty:
             df_suc = df_cruce.copy()
+            df_suc["SUCURSAL_CLEAN"] = df_suc["SUCURSAL"].astype(str).str.strip().str.title()
 
-            # Filtro dinámico por sucursal
-            suc_disponibles = sorted([s for s in df_suc["SUCURSAL"].dropna().unique() if str(s).strip()])
+            suc_disponibles = sorted([s for s in df_suc["SUCURSAL_CLEAN"].dropna().unique() if str(s).strip()])
             suc_seleccionadas = st.multiselect(
                 "🔍 Filtrar Sucursales a analizar:",
                 options=suc_disponibles,
@@ -1554,109 +1576,34 @@ else:
             )
 
             if suc_seleccionadas:
-                df_suc = df_suc[df_suc["SUCURSAL"].isin(suc_seleccionadas)]
+                df_suc = df_suc[df_suc["SUCURSAL_CLEAN"].isin(suc_seleccionadas)]
 
             if not df_suc.empty:
-                def categorizar_kpi(row):
-                    est = str(row.get("Estado de la ruta", "")).strip()
-                    if est == "Vencida":
-                        return "Vencida"
-                    elif est == "Finalizada con Retraso":
-                        return "Finalizada con Retraso"
-                    elif est in ["Finalizada a tiempo", "A Tiempo"]:
-                        return "A Tiempo"
-                    elif est == "Vigente":
-                        return "Vigente"
-                    return "Otros"
-
-                df_suc["Categoria_KPI"] = df_suc.apply(categorizar_kpi, axis=1)
-
-                resumen_suc = []
-                for suc, group in df_suc.groupby("SUCURSAL"):
-                    tot_fo = len(group)
-                    cnt_at = len(group[group["Categoria_KPI"] == "A Tiempo"])
-                    cnt_ret = len(group[group["Categoria_KPI"] == "Finalizada con Retraso"])
-                    cnt_ven = len(group[group["Categoria_KPI"] == "Vencida"])
-                    cnt_vig = len(group[group["Categoria_KPI"] == "Vigente"])
-
-                    evaluables = cnt_at + cnt_ret + cnt_ven
-                    pct_a_tiempo = (cnt_at / evaluables * 100) if evaluables > 0 else 0.0
-                    pct_vencidas = (cnt_ven / tot_fo * 100) if tot_fo > 0 else 0.0
-
-                    resumen_suc.append({
-                        "SUCURSAL": suc,
-                        "Total FO": tot_fo,
-                        "A Tiempo": cnt_at,
-                        "Con Retraso": cnt_ret,
-                        "Vencidas": cnt_ven,
-                        "Vigentes": cnt_vig,
-                        "% Cumplimiento (A Tiempo)": round(pct_a_tiempo, 1),
-                        "% Vencidas": round(pct_vencidas, 1)
-                    })
-
-                df_res_suc = pd.DataFrame(resumen_suc)
-
-                tot_filtrado = df_res_suc["Total FO"].sum()
-                at_filtrado = df_res_suc["A Tiempo"].sum()
-                ven_filtrado = df_res_suc["Vencidas"].sum()
-                eval_filtrado = at_filtrado + df_res_suc["Con Retraso"].sum() + ven_filtrado
-
-                pct_at_global = (at_filtrado / eval_filtrado * 100) if eval_filtrado > 0 else 0.0
-                pct_ven_global = (ven_filtrado / tot_filtrado * 100) if tot_filtrado > 0 else 0.0
-
-                st.markdown("##### 📌 Resumen de Cumplimiento del Filtro Seleccionado")
-                m1, m2, m3 = st.columns(3)
-                with m1:
-                    st.markdown(f'<div class="kpi-card kpi-info"><div class="kpi-title">Total Operaciones</div><div class="kpi-value">{tot_filtrado}</div></div>', unsafe_allow_html=True)
-                with m2:
-                    color_at = "#2ecc71" if pct_at_global >= 90 else "#e74c3c"
-                    st.markdown(f'<div class="kpi-card {"kpi-success" if pct_at_global >= 90 else "kpi-danger"}"><div class="kpi-title">% Cumplimiento A Tiempo</div><div class="kpi-value">{pct_at_global:.1f}%</div><div class="kpi-sub" style="color: {color_at};">Meta >= 90%</div></div>', unsafe_allow_html=True)
-                with m3:
-                    color_v = "#2ecc71" if pct_ven_global <= 5 else "#e74c3c"
-                    st.markdown(f'<div class="kpi-card {"kpi-success" if pct_ven_global <= 5 else "kpi-danger"}"><div class="kpi-title">% FO Vencidas</div><div class="kpi-value">{pct_ven_global:.1f}%</div><div class="kpi-sub" style="color: {color_v};">Límite <= 5%</div></div>', unsafe_allow_html=True)
-
-                st.divider()
-
-                g_col1, g_col2 = st.columns(2)
-                with g_col1:
-                    fig_at = px.bar(
-                        df_res_suc,
-                        x="SUCURSAL",
-                        y="% Cumplimiento (A Tiempo)",
-                        text="% Cumplimiento (A Tiempo)",
-                        title="🎯 % Cumplimiento (A Tiempo) por Sucursal (Meta 90%)",
-                        color_discrete_sequence=["#2ecc71"]
-                    )
-                    fig_at.add_hline(y=90, line_dash="dash", line_color="red", annotation_text="Meta 90%")
-                    fig_at.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-                    fig_at.update_layout(yaxis=dict(range=[0, 105]))
-                    st.plotly_chart(fig_at, use_container_width=True)
-
-                with g_col2:
-                    fig_ven = px.bar(
-                        df_res_suc,
-                        x="SUCURSAL",
-                        y="% Vencidas",
-                        text="% Vencidas",
-                        title="🚨 % FO Vencidas por Sucursal (Límite Max 5%)",
-                        color_discrete_sequence=["#e74c3c"]
-                    )
-                    fig_ven.add_hline(y=5, line_dash="dash", line_color="orange", annotation_text="Límite 5%")
-                    fig_ven.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-                    fig_ven.update_layout(yaxis=dict(range=[0, max(df_res_suc["% Vencidas"].max() + 10, 15)]))
-                    st.plotly_chart(fig_ven, use_container_width=True)
-
-                st.divider()
-
-                st.markdown("##### 📊 Tabla Comparativa por Sucursal")
-                df_res_suc_disp = df_res_suc.copy()
-                df_res_suc_disp["% Cumplimiento (A Tiempo)"] = df_res_suc_disp["% Cumplimiento (A Tiempo)"].apply(lambda x: f"{x:.1f}%")
-                df_res_suc_disp["% Vencidas"] = df_res_suc_disp["% Vencidas"].apply(lambda x: f"{x:.1f}%")
-
-                st.dataframe(
-                    df_res_suc_disp,
-                    use_container_width=True
+                # Tabla Cruzada de Resultados (Igual a la pestaña RESULTADOS del Excel)
+                tabla_resultados = pd.crosstab(
+                    df_suc["SUCURSAL_CLEAN"],
+                    df_suc["Estado de la ruta"],
+                    margins=True,
+                    margins_name="Total general"
                 )
+
+                st.markdown("##### 📊 Consolidado Dinámico de Resultados")
+                st.dataframe(tabla_resultados, use_container_width=True)
+
+                st.divider()
+
+                # Gráficos por Sucursal
+                df_graf_suc = df_suc.groupby(["SUCURSAL_CLEAN", "Estado de la ruta"]).size().reset_index(name="Cantidad")
+                fig_suc_bar = px.bar(
+                    df_graf_suc,
+                    x="SUCURSAL_CLEAN",
+                    y="Cantidad",
+                    color="Estado de la ruta",
+                    title="📊 Distribución de Operaciones por Sucursal",
+                    barmode="stack",
+                    text_auto=True
+                )
+                st.plotly_chart(fig_suc_bar, use_container_width=True)
 
             else:
                 st.warning("No hay datos disponibles para las sucursales seleccionadas.")
@@ -1667,7 +1614,7 @@ else:
     elif st.session_state.modulo_activo == "RETRASO":
         st.subheader("⏱️ FO Finalizadas con Retraso")
         if not df_cruce.empty:
-            df_solo_retraso = df_cruce[df_cruce["Estado de la ruta"] == "Finalizada con Retraso"].copy()
+            df_solo_retraso = df_cruce[df_cruce["Estado de la ruta"].str.contains("Retraso", na=False)].copy()
             if not df_solo_retraso.empty:
                 st.dataframe(df_solo_retraso.style.map(color_filas_estado, subset=["Estado_Reporte"]), use_container_width=True, height=500)
             else:
