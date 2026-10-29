@@ -1070,7 +1070,7 @@ with st.sidebar:
     if HAS_GSHEETS and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
         st.success("🟢 **Google Sheets Conectado:** Las FO se guardan permanentemente en la nube.")
     else:
-        st.warning("🔴 **Modo Offline/Local:** Para persitencia en la nube, configura Secrets en Streamlit Cloud.")
+        st.warning("🔴 **Modo Offline/Local:** Para persistencia en la nube, configura Secrets en Streamlit Cloud.")
 
     fecha_act_display = st.session_state.get("ultima_fecha_act", ultima_fecha_act)
     if fecha_act_display:
@@ -1603,11 +1603,11 @@ else:
         else:
             st.info("Sin datos de ranking actualmente en la planilla cargada.")
 
-    # MÓDULO 5: SUCURSALES
+    # MÓDULO 5: SUCURSALES (PORCENTAJES DE CUMPLIMIENTO)
     elif st.session_state.modulo_activo == "SUCURSALES":
-        st.subheader("🏢 Rendimiento por Sucursales (Desglose de Retrasos y Reportes)")
+        st.subheader("🏢 Rendimiento y Porcentajes de Cumplimiento por Sucursal")
         if not df_cruce.empty:
-            df_suc_graf = df_cruce.copy()
+            df_suc = df_cruce.copy()
 
             def clasificar_estado_sucursal(row):
                 est = str(row.get("Estado de la ruta", "")).strip()
@@ -1619,13 +1619,27 @@ else:
                         return "Finalizada con Retraso (Sin Reporte)"
                 return est
 
-            df_suc_graf["Estado_Grafico_Sucursal"] = df_suc_graf.apply(clasificar_estado_sucursal, axis=1)
+            df_suc["Estado_Grafico"] = df_suc.apply(clasificar_estado_sucursal, axis=1)
 
-            df_suc_counts = (
-                df_suc_graf.groupby(["SUCURSAL", "Estado_Grafico_Sucursal"])
+            # 1. Agrupar por Sucursal y Estado
+            df_counts = (
+                df_suc.groupby(["SUCURSAL", "Estado_Grafico"])
                 .size()
                 .reset_index(name="Cantidad")
             )
+
+            # 2. Calcular Totales por Sucursal
+            df_totales = (
+                df_suc.groupby("SUCURSAL")
+                .size()
+                .reset_index(name="Total_Sucursal")
+            )
+
+            # 3. Calcular Porcentajes Relative
+            df_merged = pd.merge(df_counts, df_totales, on="SUCURSAL")
+            df_merged["Porcentaje"] = (
+                (df_merged["Cantidad"] / df_merged["Total_Sucursal"]) * 100
+            ).round(1)
 
             color_map_suc = {
                 "Vigente": "#3498db",
@@ -1636,19 +1650,45 @@ else:
                 "A Tiempo": "#2ecc71",
             }
 
+            # Gráfico apilado al 100%
             fig_suc = px.bar(
-                df_suc_counts,
+                df_merged,
                 x="SUCURSAL",
-                y="Cantidad",
-                color="Estado_Grafico_Sucursal",
+                y="Porcentaje",
+                color="Estado_Grafico",
                 color_discrete_map=color_map_suc,
                 barmode="stack",
-                text_auto=True,
-                title="Distribución por Sucursal (Con Desglose de Retrasos Reportados vs Sin Reporte)",
+                text=df_merged["Porcentaje"].apply(lambda x: f"{x:.1f}%"),
+                title="Distribución Porcentual (%) por Sucursal",
+                labels={"Porcentaje": "Porcentaje (%)", "SUCURSAL": "Sucursal"},
             )
+            fig_suc.update_layout(yaxis=dict(range=[0, 100]))
             st.plotly_chart(fig_suc, use_container_width=True)
+
+            st.divider()
+
+            # Tabla resumen de Porcentajes por Sucursal
+            st.markdown("##### 📊 Tabla Resumen Porcentual por Sucursal")
+            df_pivot_pct = (
+                df_merged.pivot(
+                    index="SUCURSAL", columns="Estado_Grafico", values="Porcentaje"
+                )
+                .fillna(0.0)
+            )
+
+            # Agregar columna de Total Operaciones
+            df_pivot_pct.insert(
+                0, "Total_FO", df_totales.set_index("SUCURSAL")["Total_Sucursal"]
+            )
+
+            # Formatear columnas como porcentaje
+            cols_pct = [c for c in df_pivot_pct.columns if c != "Total_FO"]
+            st.dataframe(
+                df_pivot_pct.style.format({c: "{:.1f}%" for c in cols_pct}),
+                use_container_width=True,
+            )
         else:
-            st.info("Sin información para generar el gráfico por sucursales.")
+            st.info("Sin información para generar el análisis por sucursales.")
 
     # MÓDULO 6: RETRASO
     elif st.session_state.modulo_activo == "RETRASO":
