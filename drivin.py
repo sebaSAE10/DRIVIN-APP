@@ -488,65 +488,6 @@ def cargar_papelera():
     return pd.DataFrame()
 
 
-def guardar_nuevo_registro(registro):
-    df_hist = cargar_historico()
-    fecha_str = str(registro["Fecha_Registro"])
-    if fecha_str in df_hist["Fecha_Registro"].astype(str).values:
-        st.toast(f"⚠️ El día {fecha_str} ya existe en el histórico.", icon="⚠️")
-        return False
-    else:
-        df_hist = pd.concat([df_hist, pd.DataFrame([registro])], ignore_index=True)
-        df_hist["Fecha_Registro"] = pd.to_datetime(df_hist["Fecha_Registro"]).dt.date
-        df_hist = df_hist.sort_values(by="Fecha_Registro")
-        df_hist.to_csv(HISTORICO_FILE, index=False)
-        st.toast(f"✅ Se guardó el día {fecha_str}.", icon="✅")
-        return True
-
-
-def actualizar_registro_existente(registro):
-    df_hist = cargar_historico()
-    fecha_str = str(registro["Fecha_Registro"])
-    if fecha_str in df_hist["Fecha_Registro"].astype(str).values:
-        idx = df_hist[df_hist["Fecha_Registro"].astype(str) == fecha_str].index[0]
-        for key, value in registro.items():
-            df_hist.at[idx, key] = value
-        df_hist["Fecha_Registro"] = pd.to_datetime(df_hist["Fecha_Registro"]).dt.date
-        df_hist = df_hist.sort_values(by="Fecha_Registro")
-        df_hist.to_csv(HISTORICO_FILE, index=False)
-        st.toast(f"🔄 Se actualizó el día {fecha_str}.", icon="🔄")
-        return True
-    else:
-        st.toast(f"❌ No existe un registro previo para {fecha_str}.", icon="❌")
-        return False
-
-
-def eliminar_registro_historico(fecha_eliminar_str, clave_ingresada):
-    if clave_ingresada != "123":
-        st.toast("🔑 Clave incorrecta. No se eliminó el registro.", icon="🔑")
-        return False
-
-    df_hist = cargar_historico()
-    fecha_eliminar_str = str(fecha_eliminar_str)
-
-    if fecha_eliminar_str not in df_hist["Fecha_Registro"].astype(str).values:
-        st.toast(f"❌ No se encontró el día {fecha_eliminar_str} en el histórico.", icon="❌")
-        return False
-
-    fila_elim = df_hist[df_hist["Fecha_Registro"].astype(str) == fecha_eliminar_str].copy()
-    fila_elim["Fecha_Eliminacion"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    df_papelera = cargar_papelera()
-    df_papelera = pd.concat([df_papelera, fila_elim], ignore_index=True)
-    df_papelera.to_csv(PAPELERA_HISTORICO_FILE, index=False)
-
-    df_hist = df_hist[df_hist["Fecha_Registro"].astype(str) != fecha_eliminar_str]
-    df_hist.to_csv(HISTORICO_FILE, index=False)
-
-    st.toast(f"🗑️ Se eliminó el día {fecha_eliminar_str}.", icon="🗑️")
-    return True
-
-
-# --- LÓGICA DE CIERRE DE MES ---
 def ejecutar_cierre_de_mes(nombre_mes, usuario_resp):
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     carpeta_destino = os.path.join(RESPALDOS_MES_DIR, f"Cierre_{nombre_mes}_{stamp}")
@@ -675,20 +616,6 @@ def reaplicar_cruce_con_reportes():
 
 
 # --- EXPORTACIÓN A EXCEL Y COLORIDO DE TABLAS ---
-def generar_excel_descarga(df_cruce, dict_metricas, df_ranking=None):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_met = pd.DataFrame([dict_metricas])
-        df_met.to_excel(writer, sheet_name="Resumen_KPIs", index=False)
-        df_cruce.to_excel(writer, sheet_name="Vencidas_y_Vigentes", index=False)
-        df_retraso = df_cruce[df_cruce["Estado de la ruta"] == "Finalizada con Retraso"]
-        if not df_retraso.empty:
-            df_retraso.to_excel(writer, sheet_name="Finalizadas_Con_Retraso", index=False)
-        if df_ranking is not None and not df_ranking.empty:
-            df_ranking.to_excel(writer, sheet_name="Ranking_Conductores", index=False)
-    return output.getvalue()
-
-
 def generar_excel_solo_tabla(df_tabla, nombre_hoja="Datos"):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -1237,6 +1164,40 @@ fecha_encabezado = st.session_state.get("ultima_fecha_act", ultima_fecha_act)
 if fecha_encabezado:
     st.caption(f"📅 **Información actualizada al:** {fecha_encabezado}")
 
+# SECCIÓN DE BOTONES DE DESCARGA EN EXCEL DIRECTA
+df_cruce = st.session_state.get("df_cruce", pd.DataFrame())
+df_ranking = st.session_state.get("df_ranking", pd.DataFrame())
+
+if not df_cruce.empty:
+    st.markdown("##### 📥 Descargas de Bases de Datos Operativas Completa")
+    d_col1, d_col2 = st.columns(2)
+    with d_col1:
+        bytes_vv = generar_excel_solo_tabla(df_cruce, nombre_hoja="Vencidas_y_Vigentes")
+        st.download_button(
+            label="📊 Descargar Base Vencidas y Vigentes (Excel Completo)",
+            data=bytes_vv,
+            file_name=f"Base_Vencidas_Vigentes_Completa_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            use_container_width=True
+        )
+
+    with d_col2:
+        df_retrasos_export = df_cruce[df_cruce["Estado de la ruta"] == "Finalizada con Retraso"]
+        if not df_retrasos_export.empty:
+            bytes_ret = generar_excel_solo_tabla(df_retrasos_export, nombre_hoja="Finalizadas_Con_Retraso")
+            st.download_button(
+                label="⏱️ Descargar Base Finalizadas con Retraso (Excel Completo)",
+                data=bytes_ret,
+                file_name=f"Base_Finalizadas_Con_Retraso_Completa_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+        else:
+            st.info("No hay rutas finalizadas con retraso para exportar.")
+
+st.divider()
+
 df_hist = cargar_historico()
 
 col_m1, col_m2 = st.columns([1, 2])
@@ -1259,9 +1220,6 @@ with col_m2:
     else:
         fecha_consultada = "Mes Completo Acumulado"
         st.write("📊 Consolidando todos los registros guardados del mes.")
-
-df_cruce = st.session_state.get("df_cruce", pd.DataFrame())
-df_ranking = st.session_state.get("df_ranking", pd.DataFrame())
 
 # CALCULOS DE KPIS
 if tipo_vista == "Mes Completo Acumulado" and not df_hist.empty:
@@ -1456,29 +1414,6 @@ else:
                 use_container_width=True,
                 height=500,
             )
-
-            dict_met_export = {
-                "Fecha_Consulta": fecha_consultada,
-                "Total_FO": val_tot,
-                "FO_Integradas": val_int,
-                "A_Tiempo": val_at,
-                "Con_Retraso": val_ret,
-                "Vigentes": val_vig,
-                "Vencidas": val_ven,
-                "FO_Reportadas": val_rep,
-                "FO_Con_Evento": val_evt,
-                "Retrasos_Reportados": val_ret_rep,
-                "Pct_A_Tiempo": pct_at,
-                "Pct_Vencidas": pct_v,
-            }
-            bytes_excel = generar_excel_descarga(df_vv_filtrado, dict_met_export, df_ranking)
-            st.download_button(
-                label="📥 Descargar Excel Vencidas y Vigentes",
-                data=bytes_excel,
-                file_name=f"Vencidas_y_Vigentes_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="primary",
-            )
         else:
             st.info("👈 Carga y procesa archivos desde la barra lateral para desplegar los datos.")
 
@@ -1603,7 +1538,7 @@ else:
         else:
             st.info("Sin datos de ranking actualmente en la planilla cargada.")
 
-    # MÓDULO 5: SUCURSALES (EVALUACIÓN DE PORCENTAJES A TIEMPO Y VENCIDAS)
+    # MÓDULO 5: SUCURSALES (PORCENTAJES DE CUMPLIMIENTO CON FORMATO SEGURO)
     elif st.session_state.modulo_activo == "SUCURSALES":
         st.subheader("🏢 Porcentajes de Cumplimiento por Sucursal (% A Tiempo vs % Vencidas)")
         if not df_cruce.empty:
@@ -1622,7 +1557,6 @@ else:
                 df_suc = df_suc[df_suc["SUCURSAL"].isin(suc_seleccionadas)]
 
             if not df_suc.empty:
-                # Normalización de estados evaluables
                 def categorizar_kpi(row):
                     est = str(row.get("Estado de la ruta", "")).strip()
                     if est == "Vencida":
@@ -1637,7 +1571,6 @@ else:
 
                 df_suc["Categoria_KPI"] = df_suc.apply(categorizar_kpi, axis=1)
 
-                # Agrupación por Sucursal
                 resumen_suc = []
                 for suc, group in df_suc.groupby("SUCURSAL"):
                     tot_fo = len(group)
@@ -1646,7 +1579,6 @@ else:
                     cnt_ven = len(group[group["Categoria_KPI"] == "Vencida"])
                     cnt_vig = len(group[group["Categoria_KPI"] == "Vigente"])
 
-                    # Evaluación On-Time (A Tiempo vs Evaluables cerradas/vencidas)
                     evaluables = cnt_at + cnt_ret + cnt_ven
                     pct_a_tiempo = (cnt_at / evaluables * 100) if evaluables > 0 else 0.0
                     pct_vencidas = (cnt_ven / tot_fo * 100) if tot_fo > 0 else 0.0
@@ -1664,7 +1596,6 @@ else:
 
                 df_res_suc = pd.DataFrame(resumen_suc)
 
-                # Tarjetas de resumen para la sucursal o grupo filtrado
                 tot_filtrado = df_res_suc["Total FO"].sum()
                 at_filtrado = df_res_suc["A Tiempo"].sum()
                 ven_filtrado = df_res_suc["Vencidas"].sum()
@@ -1686,7 +1617,6 @@ else:
 
                 st.divider()
 
-                # Gráficos comparativos por Sucursal
                 g_col1, g_col2 = st.columns(2)
                 with g_col1:
                     fig_at = px.bar(
@@ -1718,14 +1648,14 @@ else:
 
                 st.divider()
 
-                # Tabla detallada por Sucursal
+                # Tabla con formato numérico nativo de Streamlit (Evita errores de sintaxis)
                 st.markdown("##### 📊 Tabla Comparativa por Sucursal")
+                df_res_suc_disp = df_res_suc.copy()
+                df_res_suc_disp["% Cumplimiento (A Tiempo)"] = df_res_suc_disp["% Cumplimiento (A Tiempo)"].apply(lambda x: f"{x:.1f}%")
+                df_res_suc_disp["% Vencidas"] = df_res_suc_disp["% Vencidas"].apply(lambda x: f"{x:.1f}%")
+
                 st.dataframe(
-                    df_res_suc.style.format({
-                        "% Cumplimiento (A Tiempo)": "{:.1f}%",
-                        "% Vencidas": "{:.1f}%"
-                    }).background_gradient(subset=["% Cumplimiento (A Tiempo)"], cmap="Greens")
-                    .background_gradient(subset=["% Vencidas"], cmap="Reds"),
+                    df_res_suc_disp,
                     use_container_width=True
                 )
 
