@@ -615,7 +615,23 @@ def reaplicar_cruce_con_reportes():
         guardar_cache_global(st.session_state.totales, df_cruce_p, st.session_state.df_ranking)
 
 
-# --- EXPORTACIÓN A EXCEL Y COLORIDO DE TABLAS ---
+# --- EXPORTACIÓN A UN SOLO EXCEL MULTI-PESTAÑA ---
+def generar_excel_unificado_completo(df_cruce):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        # Pestaña 1: Vencidas y Vigentes (Base Unificada Completa)
+        df_cruce.to_excel(writer, sheet_name="Vencidas_y_Vigentes", index=False)
+        
+        # Pestaña 2: Finalizadas con Retraso (Filtrado)
+        df_retrasos = df_cruce[df_cruce["Estado de la ruta"] == "Finalizada con Retraso"]
+        if not df_retrasos.empty:
+            df_retrasos.to_excel(writer, sheet_name="Finalizadas_Con_Retraso", index=False)
+        else:
+            pd.DataFrame(columns=df_cruce.columns).to_excel(writer, sheet_name="Finalizadas_Con_Retraso", index=False)
+            
+    return output.getvalue()
+
+
 def generar_excel_solo_tabla(df_tabla, nombre_hoja="Datos"):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -1010,6 +1026,22 @@ with st.sidebar:
 
     st.divider()
 
+    # --- BOTÓN DE DESCARGA UNIFICADA COMPLETA EN PANEL ADMINISTRADOR ---
+    df_cruce_admin = st.session_state.get("df_cruce", pd.DataFrame())
+    if not df_cruce_admin.empty:
+        st.subheader("📥 Exportación de Datos Operativos")
+        bytes_excel_unificado = generar_excel_unificado_completo(df_cruce_admin)
+        st.download_button(
+            label="📊 Descargar Base Completa (V&V + Retrasos en Excel)",
+            data=bytes_excel_unificado,
+            file_name=f"Base_Operativa_Unificada_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            use_container_width=True,
+            help="Descarga un solo archivo Excel con 2 pestañas: Vencidas/Vigentes y Finalizadas con Retraso con toda la información de origen, destino, sucursal y folios."
+        )
+        st.divider()
+
     # --- MÓDULO DE CIERRE DE MES ---
     st.subheader("🔒 Cierre de Mes (Cero / Reset)")
     with st.expander("🚨 Ejecutar Cierre Mensual"):
@@ -1164,40 +1196,8 @@ fecha_encabezado = st.session_state.get("ultima_fecha_act", ultima_fecha_act)
 if fecha_encabezado:
     st.caption(f"📅 **Información actualizada al:** {fecha_encabezado}")
 
-# SECCIÓN DE BOTONES DE DESCARGA EN EXCEL DIRECTA
 df_cruce = st.session_state.get("df_cruce", pd.DataFrame())
 df_ranking = st.session_state.get("df_ranking", pd.DataFrame())
-
-if not df_cruce.empty:
-    st.markdown("##### 📥 Descargas de Bases de Datos Operativas Completa")
-    d_col1, d_col2 = st.columns(2)
-    with d_col1:
-        bytes_vv = generar_excel_solo_tabla(df_cruce, nombre_hoja="Vencidas_y_Vigentes")
-        st.download_button(
-            label="📊 Descargar Base Vencidas y Vigentes (Excel Completo)",
-            data=bytes_vv,
-            file_name=f"Base_Vencidas_Vigentes_Completa_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary",
-            use_container_width=True
-        )
-
-    with d_col2:
-        df_retrasos_export = df_cruce[df_cruce["Estado de la ruta"] == "Finalizada con Retraso"]
-        if not df_retrasos_export.empty:
-            bytes_ret = generar_excel_solo_tabla(df_retrasos_export, nombre_hoja="Finalizadas_Con_Retraso")
-            st.download_button(
-                label="⏱️ Descargar Base Finalizadas con Retraso (Excel Completo)",
-                data=bytes_ret,
-                file_name=f"Base_Finalizadas_Con_Retraso_Completa_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-        else:
-            st.info("No hay rutas finalizadas con retraso para exportar.")
-
-st.divider()
-
 df_hist = cargar_historico()
 
 col_m1, col_m2 = st.columns([1, 2])
@@ -1538,7 +1538,7 @@ else:
         else:
             st.info("Sin datos de ranking actualmente en la planilla cargada.")
 
-    # MÓDULO 5: SUCURSALES (PORCENTAJES DE CUMPLIMIENTO CON FORMATO SEGURO)
+    # MÓDULO 5: SUCURSALES
     elif st.session_state.modulo_activo == "SUCURSALES":
         st.subheader("🏢 Porcentajes de Cumplimiento por Sucursal (% A Tiempo vs % Vencidas)")
         if not df_cruce.empty:
@@ -1648,7 +1648,6 @@ else:
 
                 st.divider()
 
-                # Tabla con formato numérico nativo de Streamlit (Evita errores de sintaxis)
                 st.markdown("##### 📊 Tabla Comparativa por Sucursal")
                 df_res_suc_disp = df_res_suc.copy()
                 df_res_suc_disp["% Cumplimiento (A Tiempo)"] = df_res_suc_disp["% Cumplimiento (A Tiempo)"].apply(lambda x: f"{x:.1f}%")
@@ -1674,7 +1673,7 @@ else:
             else:
                 st.info("No hay rutas registradas con retraso en la carga actual.")
 
-    # MÓDULO 7: FORMULARIO DE REPORTES (SINCRONIZADO CON GOOGLE SHEETS)
+    # MÓDULO 7: FORMULARIO DE REPORTES
     elif st.session_state.modulo_activo == "REPORTAR":
         st.subheader("📝 Registro y Edición de Reportes FO (Sincronizado con Google Sheets)")
         df_reps_actuales = cargar_reportes_fo()
