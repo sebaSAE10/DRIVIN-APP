@@ -1603,92 +1603,136 @@ else:
         else:
             st.info("Sin datos de ranking actualmente en la planilla cargada.")
 
-    # MÓDULO 5: SUCURSALES (PORCENTAJES DE CUMPLIMIENTO)
+    # MÓDULO 5: SUCURSALES (EVALUACIÓN DE PORCENTAJES A TIEMPO Y VENCIDAS)
     elif st.session_state.modulo_activo == "SUCURSALES":
-        st.subheader("🏢 Rendimiento y Porcentajes de Cumplimiento por Sucursal")
+        st.subheader("🏢 Porcentajes de Cumplimiento por Sucursal (% A Tiempo vs % Vencidas)")
         if not df_cruce.empty:
             df_suc = df_cruce.copy()
 
-            def clasificar_estado_sucursal(row):
-                est = str(row.get("Estado de la ruta", "")).strip()
-                rep = str(row.get("Estado_Reporte", "")).strip()
-                if est == "Finalizada con Retraso":
-                    if rep == "🚨 REPORTADA":
-                        return "Finalizada con Retraso (REPORTADA)"
-                    else:
-                        return "Finalizada con Retraso (Sin Reporte)"
-                return est
-
-            df_suc["Estado_Grafico"] = df_suc.apply(clasificar_estado_sucursal, axis=1)
-
-            # 1. Agrupar por Sucursal y Estado
-            df_counts = (
-                df_suc.groupby(["SUCURSAL", "Estado_Grafico"])
-                .size()
-                .reset_index(name="Cantidad")
+            # Filtro dinámico por sucursal
+            suc_disponibles = sorted([s for s in df_suc["SUCURSAL"].dropna().unique() if str(s).strip()])
+            suc_seleccionadas = st.multiselect(
+                "🔍 Filtrar Sucursales a analizar:",
+                options=suc_disponibles,
+                default=suc_disponibles,
+                key="filter_modulo_sucursales"
             )
 
-            # 2. Calcular Totales por Sucursal
-            df_totales = (
-                df_suc.groupby("SUCURSAL")
-                .size()
-                .reset_index(name="Total_Sucursal")
-            )
+            if suc_seleccionadas:
+                df_suc = df_suc[df_suc["SUCURSAL"].isin(suc_seleccionadas)]
 
-            # 3. Calcular Porcentajes Relative
-            df_merged = pd.merge(df_counts, df_totales, on="SUCURSAL")
-            df_merged["Porcentaje"] = (
-                (df_merged["Cantidad"] / df_merged["Total_Sucursal"]) * 100
-            ).round(1)
+            if not df_suc.empty:
+                # Normalización de estados evaluables
+                def categorizar_kpi(row):
+                    est = str(row.get("Estado de la ruta", "")).strip()
+                    if est == "Vencida":
+                        return "Vencida"
+                    elif est == "Finalizada con Retraso":
+                        return "Finalizada con Retraso"
+                    elif est in ["Finalizada a tiempo", "A Tiempo"]:
+                        return "A Tiempo"
+                    elif est == "Vigente":
+                        return "Vigente"
+                    return "Otros"
 
-            color_map_suc = {
-                "Vigente": "#3498db",
-                "Vencida": "#e74c3c",
-                "Finalizada con Retraso (Sin Reporte)": "#f39c12",
-                "Finalizada con Retraso (REPORTADA)": "#9b59b6",
-                "Rechazada": "#8e44ad",
-                "A Tiempo": "#2ecc71",
-            }
+                df_suc["Categoria_KPI"] = df_suc.apply(categorizar_kpi, axis=1)
 
-            # Gráfico apilado al 100%
-            fig_suc = px.bar(
-                df_merged,
-                x="SUCURSAL",
-                y="Porcentaje",
-                color="Estado_Grafico",
-                color_discrete_map=color_map_suc,
-                barmode="stack",
-                text=df_merged["Porcentaje"].apply(lambda x: f"{x:.1f}%"),
-                title="Distribución Porcentual (%) por Sucursal",
-                labels={"Porcentaje": "Porcentaje (%)", "SUCURSAL": "Sucursal"},
-            )
-            fig_suc.update_layout(yaxis=dict(range=[0, 100]))
-            st.plotly_chart(fig_suc, use_container_width=True)
+                # Agrupación por Sucursal
+                resumen_suc = []
+                for suc, group in df_suc.groupby("SUCURSAL"):
+                    tot_fo = len(group)
+                    cnt_at = len(group[group["Categoria_KPI"] == "A Tiempo"])
+                    cnt_ret = len(group[group["Categoria_KPI"] == "Finalizada con Retraso"])
+                    cnt_ven = len(group[group["Categoria_KPI"] == "Vencida"])
+                    cnt_vig = len(group[group["Categoria_KPI"] == "Vigente"])
 
-            st.divider()
+                    # Evaluación On-Time (A Tiempo vs Evaluables cerradas/vencidas)
+                    evaluables = cnt_at + cnt_ret + cnt_ven
+                    pct_a_tiempo = (cnt_at / evaluables * 100) if evaluables > 0 else 0.0
+                    pct_vencidas = (cnt_ven / tot_fo * 100) if tot_fo > 0 else 0.0
 
-            # Tabla resumen de Porcentajes por Sucursal
-            st.markdown("##### 📊 Tabla Resumen Porcentual por Sucursal")
-            df_pivot_pct = (
-                df_merged.pivot(
-                    index="SUCURSAL", columns="Estado_Grafico", values="Porcentaje"
+                    resumen_suc.append({
+                        "SUCURSAL": suc,
+                        "Total FO": tot_fo,
+                        "A Tiempo": cnt_at,
+                        "Con Retraso": cnt_ret,
+                        "Vencidas": cnt_ven,
+                        "Vigentes": cnt_vig,
+                        "% Cumplimiento (A Tiempo)": round(pct_a_tiempo, 1),
+                        "% Vencidas": round(pct_vencidas, 1)
+                    })
+
+                df_res_suc = pd.DataFrame(resumen_suc)
+
+                # Tarjetas de resumen para la sucursal o grupo filtrado
+                tot_filtrado = df_res_suc["Total FO"].sum()
+                at_filtrado = df_res_suc["A Tiempo"].sum()
+                ven_filtrado = df_res_suc["Vencidas"].sum()
+                eval_filtrado = at_filtrado + df_res_suc["Con Retraso"].sum() + ven_filtrado
+
+                pct_at_global = (at_filtrado / eval_filtrado * 100) if eval_filtrado > 0 else 0.0
+                pct_ven_global = (ven_filtrado / tot_filtrado * 100) if tot_filtrado > 0 else 0.0
+
+                st.markdown("##### 📌 Resumen de Cumplimiento del Filtro Seleccionado")
+                m1, m2, m3 = st.columns(3)
+                with m1:
+                    st.markdown(f'<div class="kpi-card kpi-info"><div class="kpi-title">Total Operaciones</div><div class="kpi-value">{tot_filtrado}</div></div>', unsafe_allow_html=True)
+                with m2:
+                    color_at = "#2ecc71" if pct_at_global >= 90 else "#e74c3c"
+                    st.markdown(f'<div class="kpi-card {"kpi-success" if pct_at_global >= 90 else "kpi-danger"}"><div class="kpi-title">% Cumplimiento A Tiempo</div><div class="kpi-value">{pct_at_global:.1f}%</div><div class="kpi-sub" style="color: {color_at};">Meta >= 90%</div></div>', unsafe_allow_html=True)
+                with m3:
+                    color_v = "#2ecc71" if pct_ven_global <= 5 else "#e74c3c"
+                    st.markdown(f'<div class="kpi-card {"kpi-success" if pct_ven_global <= 5 else "kpi-danger"}"><div class="kpi-title">% FO Vencidas</div><div class="kpi-value">{pct_ven_global:.1f}%</div><div class="kpi-sub" style="color: {color_v};">Límite <= 5%</div></div>', unsafe_allow_html=True)
+
+                st.divider()
+
+                # Gráficos comparativos por Sucursal
+                g_col1, g_col2 = st.columns(2)
+                with g_col1:
+                    fig_at = px.bar(
+                        df_res_suc,
+                        x="SUCURSAL",
+                        y="% Cumplimiento (A Tiempo)",
+                        text="% Cumplimiento (A Tiempo)",
+                        title="🎯 % Cumplimiento (A Tiempo) por Sucursal (Meta 90%)",
+                        color_discrete_sequence=["#2ecc71"]
+                    )
+                    fig_at.add_hline(y=90, line_dash="dash", line_color="red", annotation_text="Meta 90%")
+                    fig_at.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+                    fig_at.update_layout(yaxis=dict(range=[0, 105]))
+                    st.plotly_chart(fig_at, use_container_width=True)
+
+                with g_col2:
+                    fig_ven = px.bar(
+                        df_res_suc,
+                        x="SUCURSAL",
+                        y="% Vencidas",
+                        text="% Vencidas",
+                        title="🚨 % FO Vencidas por Sucursal (Límite Max 5%)",
+                        color_discrete_sequence=["#e74c3c"]
+                    )
+                    fig_ven.add_hline(y=5, line_dash="dash", line_color="orange", annotation_text="Límite 5%")
+                    fig_ven.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+                    fig_ven.update_layout(yaxis=dict(range=[0, max(df_res_suc["% Vencidas"].max() + 10, 15)]))
+                    st.plotly_chart(fig_ven, use_container_width=True)
+
+                st.divider()
+
+                # Tabla detallada por Sucursal
+                st.markdown("##### 📊 Tabla Comparativa por Sucursal")
+                st.dataframe(
+                    df_res_suc.style.format({
+                        "% Cumplimiento (A Tiempo)": "{:.1f}%",
+                        "% Vencidas": "{:.1f}%"
+                    }).background_gradient(subset=["% Cumplimiento (A Tiempo)"], cmap="Greens")
+                    .background_gradient(subset=["% Vencidas"], cmap="Reds"),
+                    use_container_width=True
                 )
-                .fillna(0.0)
-            )
 
-            # Agregar columna de Total Operaciones
-            df_pivot_pct.insert(
-                0, "Total_FO", df_totales.set_index("SUCURSAL")["Total_Sucursal"]
-            )
-
-            # Formatear columnas como porcentaje
-            cols_pct = [c for c in df_pivot_pct.columns if c != "Total_FO"]
-            st.dataframe(
-                df_pivot_pct.style.format({c: "{:.1f}%" for c in cols_pct}),
-                use_container_width=True,
-            )
+            else:
+                st.warning("No hay datos disponibles para las sucursales seleccionadas.")
         else:
-            st.info("Sin información para generar el análisis por sucursales.")
+            st.info("Sin información cargada para calcular los indicadores por sucursal.")
 
     # MÓDULO 6: RETRASO
     elif st.session_state.modulo_activo == "RETRASO":
