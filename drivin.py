@@ -832,9 +832,9 @@ def procesar_drivin_pdf(file_pdf_drivin):
     reader = pypdf.PdfReader(file_pdf_drivin)
     texto_completo = ""
     for page in reader.pages:
-        texto_completo += (page.extract_text() or "") + "\n"
+        texto_completo += (page.extract_text() or "") + chr(10)
 
-    lineas = texto_completo.split("\n")
+    lineas = texto_completo.split(chr(10))
     seccion_actual = "Vigente"
 
     for i, line in enumerate(lineas):
@@ -1039,7 +1039,7 @@ with st.sidebar:
 
     fecha_act_display = st.session_state.get("ultima_fecha_act", ultima_fecha_act)
     if fecha_act_display:
-        st.info(f"🕒 **Última actualización local:**\n{fecha_act_display}")
+        st.info(f"🕒 **Última actualización local:**\n" + str(fecha_act_display))
 
     if st.button("🔄 Sincronizar con Google Sheets", use_container_width=True):
         reaplicar_cruce_con_reportes()
@@ -1243,55 +1243,54 @@ with col_m2:
         fecha_consultada = "Mes Completo Acumulado"
         st.write("📊 Consolidando todos los registros guardados del mes.")
 
-# CALCULOS DE KPIS
-if tipo_vista == "Mes Completo Acumulado" and not df_hist.empty:
-    val_tot = int(df_hist["FO_Totales"].sum())
-    val_int = int(df_hist["Integradas"].sum())
-    val_at = int(df_hist["A_Tiempo"].sum())
-    val_ret = int(df_hist["Con_Retraso"].sum())
-    val_vig = int(df_hist["Vigentes"].iloc[-1]) if not df_hist.empty else 0
-    val_ven = int(df_hist["Vencidas"].sum())
-    val_rep = int(df_hist["FO_Reportadas"].sum())
-    val_evt = int(df_hist["FO_Con_Evento"].sum())
-    val_ret_rep = int(df_hist["Retrasos_Reportados"].sum())
-    eval_tot = val_at + val_ret + val_ven
-    pct_at = (val_at / eval_tot * 100) if eval_tot > 0 else 0.0
-    pct_v = (val_ven / val_int * 100) if val_int > 0 else 0.0
-elif fecha_consultada != "📅 Carga Actual Local" and not df_hist.empty:
-    fila_dia = df_hist[df_hist["Fecha_Registro"].astype(str) == fecha_consultada].iloc[-1]
-    val_tot = int(fila_dia["FO_Totales"])
-    val_int = int(fila_dia["Integradas"])
-    val_at = int(fila_dia["A_Tiempo"])
-    val_ret = int(fila_dia["Con_Retraso"])
-    val_vig = int(fila_dia["Vigentes"])
-    val_ven = int(fila_dia["Vencidas"])
-    val_rep = int(fila_dia.get("FO_Reportadas", 0))
-    val_evt = int(fila_dia.get("FO_Con_Evento", 0))
-    val_ret_rep = int(fila_dia.get("Retrasos_Reportados", 0))
-    pct_at = float(fila_dia["Pct_A_Tiempo"])
-    pct_v = float(fila_dia["Pct_Vencidas"])
-else:
-    val_tot = st.session_state.totales.get("total_fo", 0) if st.session_state.get("totales") else len(df_cruce)
-    val_int = st.session_state.totales.get("integradas", len(df_cruce)) if st.session_state.get("totales") else len(df_cruce)
-    val_at = st.session_state.totales.get("a_tiempo", 0) if st.session_state.get("totales") else 0
-    val_ret = len(df_cruce[df_cruce["Estado de la ruta"].str.contains("Retraso", na=False)]) if not df_cruce.empty and "Estado de la ruta" in df_cruce.columns else 0
-    val_vig = len(df_cruce[df_cruce["Estado de la ruta"] == "Vigente"]) if not df_cruce.empty and "Estado de la ruta" in df_cruce.columns else 0
-    val_ven = len(df_cruce[df_cruce["Estado de la ruta"].str.contains("Vencida", na=False)]) if not df_cruce.empty and "Estado de la ruta" in df_cruce.columns else 0
-    val_rep = len(df_cruce[df_cruce["Estado_Reporte"] == "🚨 REPORTADA"]) if not df_cruce.empty and "Estado_Reporte" in df_cruce.columns else 0
-    val_evt = len(df_cruce[df_cruce["Evento"].notna() & (df_cruce["Evento"].astype(str).str.strip() != "-") & (df_cruce["Evento"].astype(str).str.strip() != "")]) if not df_cruce.empty and "Evento" in df_cruce.columns else 0
+# --- CÁLCULOS DE KPIS NORMALIZADOS ---
+if not df_cruce.empty and "Estado de la ruta" in df_cruce.columns:
+    df_eval = df_cruce.copy()
     
-    if not df_cruce.empty and "Estado de la ruta" in df_cruce.columns and "Estado_Reporte" in df_cruce.columns:
-        val_ret_rep = len(df_cruce[(df_cruce["Estado de la ruta"].str.contains("Retraso", na=False)) & (df_cruce["Estado_Reporte"] == "🚨 REPORTADA")])
+    # 1. Normalizar columna Estado de la ruta para contar sin importar si dice 'REPORTADA'
+    df_eval["Estado_Base"] = (
+        df_eval["Estado de la ruta"]
+        .astype(str)
+        .str.replace("REPORTADA ", "", regex=False)
+        .str.strip()
+    )
+
+    # 2. Conteo de métricas reales sobre los registros cargados
+    val_int = len(df_eval)
+    val_tot = st.session_state.totales.get("total_fo", val_int) if st.session_state.get("totales") else val_int
+    if val_tot < val_int:
+        val_tot = val_int
+
+    val_ret = len(df_eval[df_eval["Estado_Base"] == "Finalizada con Retraso"])
+    val_ven = len(df_eval[df_eval["Estado_Base"] == "Vencida"])
+    val_vig = len(df_eval[df_eval["Estado_Base"] == "Vigente"])
+    val_rec = len(df_eval[df_eval["Estado_Base"] == "Rechazada"])
+    
+    # FO Finalizadas a Tiempo
+    val_at = max(0, val_tot - (val_ret + val_ven + val_vig + val_rec))
+
+    # FO Reportadas con justificación/inconsistencia
+    if "Estado_Reporte" in df_eval.columns:
+        val_rep = len(df_eval[df_eval["Estado_Reporte"] == "🚨 REPORTADA"])
+        val_ret_rep = len(df_eval[(df_eval["Estado_Base"] == "Finalizada con Retraso") & (df_eval["Estado_Reporte"] == "🚨 REPORTADA")])
     else:
-        val_ret_rep = 0
+        val_rep = len(df_eval[df_eval["Estado de la ruta"].str.contains("REPORTADA", na=False)])
+        val_ret_rep = len(df_eval[df_eval["Estado de la ruta"] == "REPORTADA Finalizada con Retraso"])
 
-    eval_tot = val_at + val_ret + val_ven
-    pct_at = (val_at / eval_tot * 100) if eval_tot > 0 else 0.0
+    # Eventos
+    val_evt = len(df_eval[df_eval["Evento"].notna() & (df_eval["Evento"].astype(str).str.strip().isin(["-", "", "nan"]) == False)]) if "Evento" in df_eval.columns else 0
+
+    # Porcentajes exactos
+    eval_cerradas = val_at + val_ret + val_ven
+    pct_at = (val_at / eval_cerradas * 100) if eval_cerradas > 0 else 0.0
     pct_v = (val_ven / val_int * 100) if val_int > 0 else 0.0
+    pct_rep_total = (val_rep / val_int * 100) if val_int > 0 else 0.0
+    pct_ret_justificados = (val_ret_rep / val_ret * 100) if val_ret > 0 else 0.0
+    pct_evt_total = (val_evt / val_int * 100) if val_int > 0 else 0.0
 
-pct_rep_total = (val_rep / val_int * 100) if val_int > 0 else 0.0
-pct_ret_justificados = (val_ret_rep / val_ret * 100) if val_ret > 0 else 0.0
-pct_evt_total = (val_evt / val_int * 100) if val_int > 0 else 0.0
+else:
+    val_tot = val_int = val_at = val_ret = val_vig = val_ven = val_rep = val_evt = val_ret_rep = 0
+    pct_at = pct_v = pct_rep_total = pct_ret_justificados = pct_evt_total = 0.0
 
 if val_int > 0:
     st.markdown("##### 📌 Indicadores Clave del Servicio")
