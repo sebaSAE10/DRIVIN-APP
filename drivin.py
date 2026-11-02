@@ -289,15 +289,26 @@ def cargar_reportes_fo():
     if HAS_GSHEETS and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
         try:
             conn = st.connection("gsheets", type=GSheetsConnection)
-            df = conn.read(ttl=0)
+            df = conn.read(worksheet="Reportes", ttl=0)
             if df is not None and not df.empty:
                 df = df.astype(str)
                 df["FO"] = df["FO"].apply(limpiar_fo_str)
                 if "Coordinador_Komatsu" not in df.columns:
                     df["Coordinador_Komatsu"] = "-"
                 return df
-        except Exception as e:
-            st.warning(f"⚠️ Leyendo respaldos locales por problemas de conexión con Google Sheets: {e}")
+        except Exception:
+            try:
+                # Intento fallback si la pestaña no se llama Reportes
+                conn = st.connection("gsheets", type=GSheetsConnection)
+                df = conn.read(ttl=0)
+                if df is not None and not df.empty:
+                    df = df.astype(str)
+                    df["FO"] = df["FO"].apply(limpiar_fo_str)
+                    if "Coordinador_Komatsu" not in df.columns:
+                        df["Coordinador_Komatsu"] = "-"
+                    return df
+            except Exception as e:
+                st.warning(f"⚠️ Leyendo respaldos locales por problemas de conexión con Google Sheets: {e}")
 
     if os.path.exists(REPORTES_FILE):
         df = pd.read_csv(REPORTES_FILE, dtype=str)
@@ -328,11 +339,16 @@ def guardar_dataframe_reportes(df_reportes_completo):
     if HAS_GSHEETS and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
         try:
             conn = st.connection("gsheets", type=GSheetsConnection)
-            conn.update(data=df_reportes_completo)
+            conn.update(worksheet="Reportes", data=df_reportes_completo)
             return True
-        except Exception as e:
-            st.error(f"Error al actualizar datos en Google Sheets: {e}")
-            return False
+        except Exception:
+            try:
+                conn = st.connection("gsheets", type=GSheetsConnection)
+                conn.update(data=df_reportes_completo)
+                return True
+            except Exception as e:
+                st.error(f"Error al actualizar datos en Google Sheets: {e}")
+                return False
     return True
 
 
@@ -466,6 +482,31 @@ def cargar_cache_global():
 
 
 def cargar_historico():
+    if HAS_GSHEETS and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
+        try:
+            conn = st.connection("gsheets", type=GSheetsConnection)
+            df = conn.read(worksheet="Historico", ttl=0)
+            if df is not None and not df.empty:
+                df["Fecha_Registro"] = pd.to_datetime(df["Fecha_Registro"]).dt.date
+                cols_num = [
+                    "FO_Totales", "Integradas", "A_Tiempo", "Con_Retraso",
+                    "Vigentes", "Vencidas", "Rechazadas", "FO_Reportadas",
+                    "FO_Con_Evento", "Retrasos_Reportados"
+                ]
+                for col in cols_num:
+                    if col not in df.columns:
+                        df[col] = 0
+                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+                eval_tot_series = (df["A_Tiempo"] + df["Con_Retraso"] + df["Vencidas"]).replace(0, 1)
+                df["Pct_A_Tiempo"] = (df["A_Tiempo"] / eval_tot_series * 100).round(2)
+                df["Pct_Vencidas"] = (df["Vencidas"] / df["FO_Totales"].replace(0, 1) * 100).round(2)
+                df["Pct_Reportadas"] = (df["FO_Reportadas"] / df["FO_Totales"].replace(0, 1) * 100).round(2)
+
+                return df.sort_values(by="Fecha_Registro")
+        except Exception:
+            pass
+
     if os.path.exists(HISTORICO_FILE):
         df = pd.read_csv(HISTORICO_FILE)
         df["Fecha_Registro"] = pd.to_datetime(df["Fecha_Registro"]).dt.date
@@ -501,6 +542,22 @@ def cargar_papelera():
     return pd.DataFrame()
 
 
+def guardar_dataframe_historico(df_hist_completo):
+    df_hist_completo = df_hist_completo.copy()
+    df_hist_completo["Fecha_Registro"] = df_hist_completo["Fecha_Registro"].astype(str)
+    df_hist_completo.to_csv(HISTORICO_FILE, index=False)
+
+    if HAS_GSHEETS and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
+        try:
+            conn = st.connection("gsheets", type=GSheetsConnection)
+            conn.update(worksheet="Historico", data=df_hist_completo)
+            return True
+        except Exception as e:
+            st.error(f"Error al actualizar histórico en Google Sheets: {e}")
+            return False
+    return True
+
+
 def guardar_nuevo_registro(registro):
     df_hist = cargar_historico()
     fecha_val = pd.to_datetime(registro["Fecha_Registro"]).strftime("%Y-%m-%d")
@@ -515,8 +572,8 @@ def guardar_nuevo_registro(registro):
         df_hist = pd.concat([df_hist, pd.DataFrame([registro])], ignore_index=True)
         df_hist["Fecha_Registro"] = pd.to_datetime(df_hist["Fecha_Registro"]).dt.date
         df_hist = df_hist.sort_values(by="Fecha_Registro")
-        df_hist.to_csv(HISTORICO_FILE, index=False)
-        st.toast(f"✅ Se guardó exitosamente el día {fecha_val}.", icon="✅")
+        guardar_dataframe_historico(df_hist)
+        st.toast(f"✅ Se guardó exitosamente el día {fecha_val} en la nube.", icon="✅")
         return True
 
 
@@ -534,8 +591,8 @@ def actualizar_registro_existente(registro):
             df_hist = df_hist.drop(columns=["Fecha_Str"])
             df_hist["Fecha_Registro"] = pd.to_datetime(df_hist["Fecha_Registro"]).dt.date
             df_hist = df_hist.sort_values(by="Fecha_Registro")
-            df_hist.to_csv(HISTORICO_FILE, index=False)
-            st.toast(f"🔄 Se actualizó el día {fecha_val}.", icon="🔄")
+            guardar_dataframe_historico(df_hist)
+            st.toast(f"🔄 Se actualizó el día {fecha_val} en la nube.", icon="🔄")
             return True
 
     st.toast(f"❌ No existe un registro previo para {fecha_val}.", icon="❌")
@@ -562,7 +619,7 @@ def eliminar_registro_historico(fecha_eliminar_str, clave_ingresada):
     df_papelera.to_csv(PAPELERA_HISTORICO_FILE, index=False)
 
     df_hist = df_hist[df_hist["Fecha_Registro"].astype(str) != fecha_eliminar_str]
-    df_hist.to_csv(HISTORICO_FILE, index=False)
+    guardar_dataframe_historico(df_hist)
 
     st.toast(f"🗑️ Se eliminó el día {fecha_eliminar_str}.", icon="🗑️")
     return True
@@ -1090,7 +1147,7 @@ with st.sidebar:
 
     # Indicador de estado de la conexión a la base de datos de Google Sheets
     if HAS_GSHEETS and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
-        st.success("🟢 **Google Sheets Conectado:** Las FO se guardan permanentemente en la nube.")
+        st.success("🟢 **Google Sheets Conectado:** Las FO e Histórico se guardan permanentemente en la nube.")
     else:
         st.warning("🔴 **Modo Offline/Local:** Para persistencia en la nube, configura Secrets en Streamlit Cloud.")
 
@@ -1694,7 +1751,7 @@ else:
                 .reset_index(name="Total_Sucursal")
             )
 
-            # 3. Calcular Porcentajes Relative
+            # 3. Calcular Porcentajes Relativos
             df_merged = pd.merge(df_counts, df_totales, on="SUCURSAL")
             df_merged["Porcentaje"] = (
                 (df_merged["Cantidad"] / df_merged["Total_Sucursal"]) * 100
