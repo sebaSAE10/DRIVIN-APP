@@ -469,15 +469,27 @@ def cargar_historico():
     if os.path.exists(HISTORICO_FILE):
         df = pd.read_csv(HISTORICO_FILE)
         df["Fecha_Registro"] = pd.to_datetime(df["Fecha_Registro"]).dt.date
-        for col in ["FO_Reportadas", "FO_Con_Evento", "Retrasos_Reportados"]:
+        cols_num = [
+            "FO_Totales", "Integradas", "A_Tiempo", "Con_Retraso",
+            "Vigentes", "Vencidas", "Rechazadas", "FO_Reportadas",
+            "FO_Con_Evento", "Retrasos_Reportados"
+        ]
+        for col in cols_num:
             if col not in df.columns:
                 df[col] = 0
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+        # Calculo automático y aseguramiento de porcentajes de las FO
+        df["Pct_A_Tiempo"] = (df["A_Tiempo"] / df["FO_Totales"].replace(0, 1) * 100).round(2)
+        df["Pct_Vencidas"] = (df["Vencidas"] / df["FO_Totales"].replace(0, 1) * 100).round(2)
+        df["Pct_Reportadas"] = (df["FO_Reportadas"] / df["FO_Totales"].replace(0, 1) * 100).round(2)
+
         return df.sort_values(by="Fecha_Registro")
     return pd.DataFrame(
         columns=[
             "Fecha_Registro", "FO_Totales", "Integradas", "A_Tiempo", "Con_Retraso",
             "Vigentes", "Vencidas", "Rechazadas", "FO_Reportadas", "FO_Con_Evento",
-            "Retrasos_Reportados", "Pct_A_Tiempo", "Pct_Vencidas"
+            "Retrasos_Reportados", "Pct_A_Tiempo", "Pct_Vencidas", "Pct_Reportadas"
         ]
     )
 
@@ -490,34 +502,43 @@ def cargar_papelera():
 
 def guardar_nuevo_registro(registro):
     df_hist = cargar_historico()
-    fecha_str = str(registro["Fecha_Registro"])
-    if fecha_str in df_hist["Fecha_Registro"].astype(str).values:
-        st.toast(f"⚠️ El día {fecha_str} ya existe en el histórico.", icon="⚠️")
+    fecha_val = pd.to_datetime(registro["Fecha_Registro"]).strftime("%Y-%m-%d")
+    registro["Fecha_Registro"] = fecha_val
+
+    fechas_existentes = pd.to_datetime(df_hist["Fecha_Registro"]).dt.strftime("%Y-%m-%d").values if not df_hist.empty else []
+
+    if fecha_val in fechas_existentes:
+        st.toast(f"⚠️ El día {fecha_val} ya existe en el histórico.", icon="⚠️")
         return False
     else:
         df_hist = pd.concat([df_hist, pd.DataFrame([registro])], ignore_index=True)
         df_hist["Fecha_Registro"] = pd.to_datetime(df_hist["Fecha_Registro"]).dt.date
         df_hist = df_hist.sort_values(by="Fecha_Registro")
         df_hist.to_csv(HISTORICO_FILE, index=False)
-        st.toast(f"✅ Se guardó el día {fecha_str}.", icon="✅")
+        st.toast(f"✅ Se guardó exitosamente el día {fecha_val}.", icon="✅")
         return True
 
 
 def actualizar_registro_existente(registro):
     df_hist = cargar_historico()
-    fecha_str = str(registro["Fecha_Registro"])
-    if fecha_str in df_hist["Fecha_Registro"].astype(str).values:
-        idx = df_hist[df_hist["Fecha_Registro"].astype(str) == fecha_str].index[0]
-        for key, value in registro.items():
-            df_hist.at[idx, key] = value
-        df_hist["Fecha_Registro"] = pd.to_datetime(df_hist["Fecha_Registro"]).dt.date
-        df_hist = df_hist.sort_values(by="Fecha_Registro")
-        df_hist.to_csv(HISTORICO_FILE, index=False)
-        st.toast(f"🔄 Se actualizó el día {fecha_str}.", icon="🔄")
-        return True
-    else:
-        st.toast(f"❌ No existe un registro previo para {fecha_str}.", icon="❌")
-        return False
+    fecha_val = pd.to_datetime(registro["Fecha_Registro"]).strftime("%Y-%m-%d")
+    registro["Fecha_Registro"] = fecha_val
+
+    if not df_hist.empty:
+        df_hist["Fecha_Str"] = pd.to_datetime(df_hist["Fecha_Registro"]).dt.strftime("%Y-%m-%d")
+        if fecha_val in df_hist["Fecha_Str"].values:
+            idx = df_hist[df_hist["Fecha_Str"] == fecha_val].index[0]
+            for key, value in registro.items():
+                df_hist.at[idx, key] = value
+            df_hist = df_hist.drop(columns=["Fecha_Str"])
+            df_hist["Fecha_Registro"] = pd.to_datetime(df_hist["Fecha_Registro"]).dt.date
+            df_hist = df_hist.sort_values(by="Fecha_Registro")
+            df_hist.to_csv(HISTORICO_FILE, index=False)
+            st.toast(f"🔄 Se actualizó el día {fecha_val}.", icon="🔄")
+            return True
+
+    st.toast(f"❌ No existe un registro previo para {fecha_val}.", icon="❌")
+    return False
 
 
 def eliminar_registro_historico(fecha_eliminar_str, clave_ingresada):
@@ -1338,6 +1359,43 @@ if val_int > 0:
     with cr3:
         st.markdown(f'<div class="kpi-card kpi-info"><div class="kpi-title">FO con Evento Registrado</div><div class="kpi-value">{pct_evt_total:.1f}%</div><div class="kpi-sub" style="color: #2980b9;">{val_evt} de {val_int} FO con evento anotado</div></div>', unsafe_allow_html=True)
 
+    # MÓDULO INTERACTIVO DE GUARDADO DE DÍA EN HISTÓRICO
+    with st.expander("💾 Guardar / Actualizar Indicadores de Este Día en Histórico", expanded=False):
+        col_g1, col_g2, col_g3 = st.columns([2, 1, 1])
+        with col_g1:
+            fecha_guardar_sel = st.date_input("Fecha de Registro Operativo:", value=date.today(), key="fecha_registro_hist_save")
+        
+        reg_a_guardar = {
+            "Fecha_Registro": str(fecha_guardar_sel),
+            "FO_Totales": val_tot,
+            "Integradas": val_int,
+            "A_Tiempo": val_at,
+            "Con_Retraso": val_ret,
+            "Vigentes": val_vig,
+            "Vencidas": val_ven,
+            "Rechazadas": 0,
+            "FO_Reportadas": val_rep,
+            "FO_Con_Evento": val_evt,
+            "Retrasos_Reportados": val_ret_rep,
+            "Pct_A_Tiempo": round(pct_at, 2),
+            "Pct_Vencidas": round(pct_v, 2),
+            "Pct_Reportadas": round(pct_rep_total, 2)
+        }
+        
+        with col_g2:
+            st.write("")
+            st.write("")
+            if st.button("💾 Guardar Día Nuevo", type="primary", use_container_width=True):
+                if guardar_nuevo_registro(reg_a_guardar):
+                    st.rerun()
+        
+        with col_g3:
+            st.write("")
+            st.write("")
+            if st.button("🔄 Actualizar Día Existente", use_container_width=True):
+                if actualizar_registro_existente(reg_a_guardar):
+                    st.rerun()
+
 st.divider()
 
 # --- VISTA 1: PORTAL DE NAVEGACIÓN Y TARJETAS ---
@@ -1635,7 +1693,7 @@ else:
                 .reset_index(name="Total_Sucursal")
             )
 
-            # 3. Calcular Porcentajes Relative
+            # 3. Calcular Porcentajes Relativos
             df_merged = pd.merge(df_counts, df_totales, on="SUCURSAL")
             df_merged["Porcentaje"] = (
                 (df_merged["Cantidad"] / df_merged["Total_Sucursal"]) * 100
@@ -1857,6 +1915,7 @@ else:
                 fig_hist = go.Figure()
                 fig_hist.add_trace(go.Scatter(x=df_hist_val["Fecha_Registro"], y=df_hist_val["Pct_A_Tiempo"], mode="lines+markers+text", name="% A Tiempo", text=[f"{v:.1f}%" for v in df_hist_val["Pct_A_Tiempo"]], textposition="top center"))
                 fig_hist.add_trace(go.Scatter(x=df_hist_val["Fecha_Registro"], y=df_hist_val["Pct_Vencidas"], mode="lines+markers+text", name="% Vencidas", text=[f"{v:.2f}%" for v in df_hist_val["Pct_Vencidas"]], textposition="bottom center"))
+                fig_hist.add_trace(go.Scatter(x=df_hist_val["Fecha_Registro"], y=df_hist_val["Pct_Reportadas"], mode="lines+markers+text", name="% Reportadas", text=[f"{v:.2f}%" for v in df_hist_val["Pct_Reportadas"]], textposition="bottom center"))
                 st.plotly_chart(fig_hist, use_container_width=True)
 
             st.dataframe(df_hist, use_container_width=True, height=400)
