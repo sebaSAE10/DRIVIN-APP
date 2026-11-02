@@ -479,8 +479,9 @@ def cargar_historico():
                 df[col] = 0
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-        # Calculo automático y aseguramiento de porcentajes de las FO
-        df["Pct_A_Tiempo"] = (df["A_Tiempo"] / df["FO_Totales"].replace(0, 1) * 100).round(2)
+        # Calculo automático y aseguramiento de porcentajes de las FO sobre la base evaluada
+        eval_tot_series = (df["A_Tiempo"] + df["Con_Retraso"] + df["Vencidas"]).replace(0, 1)
+        df["Pct_A_Tiempo"] = (df["A_Tiempo"] / eval_tot_series * 100).round(2)
         df["Pct_Vencidas"] = (df["Vencidas"] / df["FO_Totales"].replace(0, 1) * 100).round(2)
         df["Pct_Reportadas"] = (df["FO_Reportadas"] / df["FO_Totales"].replace(0, 1) * 100).round(2)
 
@@ -1693,7 +1694,7 @@ else:
                 .reset_index(name="Total_Sucursal")
             )
 
-            # 3. Calcular Porcentajes Relativos
+            # 3. Calcular Porcentajes Relative
             df_merged = pd.merge(df_counts, df_totales, on="SUCURSAL")
             df_merged["Porcentaje"] = (
                 (df_merged["Cantidad"] / df_merged["Total_Sucursal"]) * 100
@@ -1915,7 +1916,6 @@ else:
                 fig_hist = go.Figure()
                 fig_hist.add_trace(go.Scatter(x=df_hist_val["Fecha_Registro"], y=df_hist_val["Pct_A_Tiempo"], mode="lines+markers+text", name="% A Tiempo", text=[f"{v:.1f}%" for v in df_hist_val["Pct_A_Tiempo"]], textposition="top center"))
                 fig_hist.add_trace(go.Scatter(x=df_hist_val["Fecha_Registro"], y=df_hist_val["Pct_Vencidas"], mode="lines+markers+text", name="% Vencidas", text=[f"{v:.2f}%" for v in df_hist_val["Pct_Vencidas"]], textposition="bottom center"))
-                fig_hist.add_trace(go.Scatter(x=df_hist_val["Fecha_Registro"], y=df_hist_val["Pct_Reportadas"], mode="lines+markers+text", name="% Reportadas", text=[f"{v:.2f}%" for v in df_hist_val["Pct_Reportadas"]], textposition="bottom center"))
                 st.plotly_chart(fig_hist, use_container_width=True)
 
             st.dataframe(df_hist, use_container_width=True, height=400)
