@@ -466,33 +466,18 @@ def cargar_cache_global():
 
 
 def cargar_historico():
+    df = None
     if HAS_GSHEETS and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
         try:
             conn = st.connection("gsheets", type=GSheetsConnection)
             df = conn.read(worksheet="Historico", ttl=0)
-            if df is not None and not df.empty:
-                df["Fecha_Registro"] = pd.to_datetime(df["Fecha_Registro"]).dt.date
-                cols_num = [
-                    "FO_Totales", "Integradas", "A_Tiempo", "Con_Retraso",
-                    "Vigentes", "Vencidas", "Rechazadas", "FO_Reportadas",
-                    "FO_Con_Evento", "Retrasos_Reportados"
-                ]
-                for col in cols_num:
-                    if col not in df.columns:
-                        df[col] = 0
-                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-
-                eval_tot_series = (df["A_Tiempo"] + df["Con_Retraso"] + df["Vencidas"]).replace(0, 1)
-                df["Pct_A_Tiempo"] = (df["A_Tiempo"] / eval_tot_series * 100).round(2)
-                df["Pct_Vencidas"] = (df["Vencidas"] / df["FO_Totales"].replace(0, 1) * 100).round(2)
-                df["Pct_Reportadas"] = (df["FO_Reportadas"] / df["FO_Totales"].replace(0, 1) * 100).round(2)
-
-                return df.sort_values(by="Fecha_Registro")
         except Exception:
-            pass
+            df = None
 
-    if os.path.exists(HISTORICO_FILE):
+    if (df is None or df.empty) and os.path.exists(HISTORICO_FILE):
         df = pd.read_csv(HISTORICO_FILE)
+
+    if df is not None and not df.empty:
         df["Fecha_Registro"] = pd.to_datetime(df["Fecha_Registro"]).dt.date
         cols_num = [
             "FO_Totales", "Integradas", "A_Tiempo", "Con_Retraso",
@@ -504,13 +489,13 @@ def cargar_historico():
                 df[col] = 0
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-        # Calculo automático y aseguramiento de porcentajes de las FO
         eval_tot_series = (df["A_Tiempo"] + df["Con_Retraso"] + df["Vencidas"]).replace(0, 1)
         df["Pct_A_Tiempo"] = (df["A_Tiempo"] / eval_tot_series * 100).round(2)
         df["Pct_Vencidas"] = (df["Vencidas"] / df["FO_Totales"].replace(0, 1) * 100).round(2)
         df["Pct_Reportadas"] = (df["FO_Reportadas"] / df["FO_Totales"].replace(0, 1) * 100).round(2)
 
         return df.sort_values(by="Fecha_Registro")
+
     return pd.DataFrame(
         columns=[
             "Fecha_Registro", "FO_Totales", "Integradas", "A_Tiempo", "Con_Retraso",
@@ -1971,7 +1956,7 @@ else:
         else:
             st.info("Aún no hay reportes de FO registrados en la hoja de Google Sheets para mostrar al mandante.")
 
-    # MÓDULO 9: HISTÓRICO Y CIERRES
+    # MÓDULO 9: HISTÓRICO Y CIERRES (CON BOTÓN DE DESCARGA DIRECTA)
     elif st.session_state.modulo_activo == "HISTORICO":
         st.subheader("📈 Evolución Histórica de Cumplimiento")
         df_hist = cargar_historico()
@@ -1986,6 +1971,17 @@ else:
                 st.plotly_chart(fig_hist, use_container_width=True)
 
             st.dataframe(df_hist, use_container_width=True, height=400)
+
+            # Botón de descarga de la tabla Histórica en Excel
+            excel_bytes_hist = generar_excel_solo_tabla(df_hist, nombre_hoja="Historico_Diario")
+            st.download_button(
+                label="📥 Descargar Tabla de Histórico Diario (Excel)",
+                data=excel_bytes_hist,
+                file_name=f"Historico_Diario_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                use_container_width=True,
+            )
         else:
             st.info("Aún no hay datos guardados en el histórico para graficar.")
 
