@@ -296,19 +296,8 @@ def cargar_reportes_fo():
                 if "Coordinador_Komatsu" not in df.columns:
                     df["Coordinador_Komatsu"] = "-"
                 return df
-        except Exception:
-            try:
-                # Intento fallback si la pestaña no se llama Reportes
-                conn = st.connection("gsheets", type=GSheetsConnection)
-                df = conn.read(ttl=0)
-                if df is not None and not df.empty:
-                    df = df.astype(str)
-                    df["FO"] = df["FO"].apply(limpiar_fo_str)
-                    if "Coordinador_Komatsu" not in df.columns:
-                        df["Coordinador_Komatsu"] = "-"
-                    return df
-            except Exception as e:
-                st.warning(f"⚠️ Leyendo respaldos locales por problemas de conexión con Google Sheets: {e}")
+        except Exception as e:
+            st.warning(f"⚠️ Leyendo respaldos locales por problemas de conexión con Google Sheets: {e}")
 
     if os.path.exists(REPORTES_FILE):
         df = pd.read_csv(REPORTES_FILE, dtype=str)
@@ -341,14 +330,9 @@ def guardar_dataframe_reportes(df_reportes_completo):
             conn = st.connection("gsheets", type=GSheetsConnection)
             conn.update(worksheet="Reportes", data=df_reportes_completo)
             return True
-        except Exception:
-            try:
-                conn = st.connection("gsheets", type=GSheetsConnection)
-                conn.update(data=df_reportes_completo)
-                return True
-            except Exception as e:
-                st.error(f"Error al actualizar datos en Google Sheets: {e}")
-                return False
+        except Exception as e:
+            st.error(f"Error al actualizar datos en Google Sheets: {e}")
+            return False
     return True
 
 
@@ -520,7 +504,7 @@ def cargar_historico():
                 df[col] = 0
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-        # Calculo automático y aseguramiento de porcentajes de las FO sobre la base evaluada
+        # Calculo automático y aseguramiento de porcentajes de las FO
         eval_tot_series = (df["A_Tiempo"] + df["Con_Retraso"] + df["Vencidas"]).replace(0, 1)
         df["Pct_A_Tiempo"] = (df["A_Tiempo"] / eval_tot_series * 100).round(2)
         df["Pct_Vencidas"] = (df["Vencidas"] / df["FO_Totales"].replace(0, 1) * 100).round(2)
@@ -1160,6 +1144,20 @@ with st.sidebar:
         st.success("✅ Sistema sincronizado correctamente.")
         st.rerun()
 
+    # BOTÓN DE DESCARGA RÁPIDA DE BBDD VENCIDAS Y VIGENTES EN EXCEL
+    if "df_cruce" in st.session_state and not st.session_state.df_cruce.empty:
+        output_vv_side = io.BytesIO()
+        with pd.ExcelWriter(output_vv_side, engine="openpyxl") as writer:
+            st.session_state.df_cruce.to_excel(writer, sheet_name="Vencidas_y_Vigentes", index=False)
+        
+        st.download_button(
+            label="📥 Descargar BBDD Vencidas y Vigentes (Excel)",
+            data=output_vv_side.getvalue(),
+            file_name=f"BBDD_Vencidas_y_Vigentes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
     st.divider()
 
     # --- MÓDULO DE CIERRE DE MES ---
@@ -1589,11 +1587,12 @@ else:
             }
             bytes_excel = generar_excel_descarga(df_vv_filtrado, dict_met_export, df_ranking)
             st.download_button(
-                label="📥 Descargar Excel Vencidas y Vigentes",
+                label="📥 Descargar Base BBDD Vencidas y Vigentes (Excel Completo)",
                 data=bytes_excel,
-                file_name=f"Vencidas_y_Vigentes_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                file_name=f"Vencidas_y_Vigentes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 type="primary",
+                use_container_width=True,
             )
         else:
             st.info("👈 Carga y procesa archivos desde la barra lateral para desplegar los datos.")
@@ -1806,13 +1805,24 @@ else:
         else:
             st.info("Sin información para generar el análisis por sucursales.")
 
-    # MÓDULO 6: RETRASO
+    # MÓDULO 6: RETRASO (INCLUYE BOTÓN DE DESCARGA DIRECTO EN EXCEL)
     elif st.session_state.modulo_activo == "RETRASO":
         st.subheader("⏱️ FO Finalizadas con Retraso")
         if not df_cruce.empty:
             df_solo_retraso = df_cruce[df_cruce["Estado de la ruta"] == "Finalizada con Retraso"].copy()
             if not df_solo_retraso.empty:
                 st.dataframe(df_solo_retraso.style.map(color_filas_estado, subset=["Estado_Reporte"]), use_container_width=True, height=500)
+                
+                # Botón para descargar únicamente la tabla de FO Finalizadas con Retraso
+                excel_bytes_retraso = generar_excel_solo_tabla(df_solo_retraso, nombre_hoja="Finalizadas_con_Retraso")
+                st.download_button(
+                    label="📥 Descargar Tabla FO Finalizadas con Retraso (Excel)",
+                    data=excel_bytes_retraso,
+                    file_name=f"FO_Finalizadas_con_Retraso_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary",
+                    use_container_width=True
+                )
             else:
                 st.info("No hay rutas registradas con retraso en la carga actual.")
 
